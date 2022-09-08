@@ -1,0 +1,20 @@
+[package]
+name = "discord-api-proxy"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+hyper = { version = "0.14", features = ["client", "server", "http2", "runtime", "stream"] }
+hyper-tls = "0.5.0"
+
+twilight-http = "0.13.0"
+
+redis = { version = "0.21.6", features = ["r2d2", "tokio-comp", "connection-manager"] }
+
+tokio = { version = "1", features = ["full"] }
+
+rand = "0.8.5"
+thiserror = "1.0.34"
+base64 = "0.13.0"
