@@ -1,10 +1,25 @@
 use std::convert::Infallible;
 use base64::decode;
-use hyper::{Body, Request, Response};
+use hyper::{Body, Request, Response, StatusCode};
 
-use crate::proxy::{ProxyWrapper, ProxyError};
+use crate::proxy::ProxyWrapper;
 
-pub async fn discord_proxy(req: Request<Body>, mut proxy: ProxyWrapper) -> Result<Response<Body>, Infallible> {
+pub async fn route(req: Request<Body>, proxy: ProxyWrapper) -> Result<Response<Body>, Infallible> {
+  let path = req.uri().path();
+
+  if path.starts_with("/api/v") {
+    proxy_discord_request(req, proxy).await
+  } else if path == "/health" {
+    Ok(Response::new(Body::from("OK")))
+  } else if path == "/metrics" {
+    // TODO: implement metrics
+    Ok(Response::new(Body::from("Not implemented")))
+  } else {
+    Ok(Response::builder().status(StatusCode::NOT_FOUND).body(Body::empty()).unwrap())
+  }
+}
+
+async fn proxy_discord_request(req: Request<Body>, mut proxy: ProxyWrapper) -> Result<Response<Body>, Infallible> {
   let (token, bot_id) = match check_headers(&req) {
     Ok((token, bot_id)) => (token, bot_id),
     Err(message) => return Ok(Response::builder().status(400).body(message.into()).unwrap())
@@ -14,9 +29,6 @@ pub async fn discord_proxy(req: Request<Body>, mut proxy: ProxyWrapper) -> Resul
     Ok(result) => result,
     Err(err) => {
       match err {
-        ProxyError::RateLimited() => {
-          return Ok(Response::builder().status(429).body("You are being ratelimited.".into()).unwrap());
-        },
         _ => {
           eprintln!("Internal Server Error: {:?}", err);
 

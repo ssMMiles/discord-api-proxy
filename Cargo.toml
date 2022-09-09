@@ -11,10 +11,13 @@ hyper-tls = "0.5.0"
 
 twilight-http = "0.13.0"
 
-redis = { version = "0.21.6", features = ["r2d2", "tokio-comp", "connection-manager"] }
+redis = { version = "0.21.6", features = ["tokio-comp", "connection-manager"] }
+deadpool-redis = "0.10.2"
 
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "1", features = ["macros", "net", "time", "rt-multi-thread"] }
 
 rand = "0.8.5"
 thiserror = "1.0.34"
 base64 = "0.13.0"
+graceful = "0.1.1"
+futures-util = "0.3.24"

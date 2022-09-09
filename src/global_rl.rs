@@ -33,7 +33,3 @@ pub async fn fetch_discord_global_ratelimit(token: &str) -> Result<u16, RedisErr
 
   Ok(global_ratelimit)
 }
-
-pub fn get_global_ratelimit_key(bot_id: &u64) -> String {
-  format!("global_ratelimit_{}", bot_id)
-}
