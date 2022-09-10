@@ -13,6 +13,10 @@ pub async fn route(req: Request<Body>, proxy: ProxyWrapper, registry: Registry) 
   } else if path == "/health" {
     Ok(Response::new(Body::from("OK")))
   } else if path == "/metrics" {
+
+    if !proxy.config.enable_metrics {
+      return Ok(Response::new(Body::from("Metrics are disabled.")));
+    }
     
     // Gather the metrics.
     let mut buffer = vec![];

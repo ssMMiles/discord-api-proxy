@@ -44,10 +44,14 @@ async fn main() {
     requests: request_histogram.clone()
   };
 
+  let enable_metrics: bool = env::var("METRICS").unwrap_or("true".to_string())
+    .parse().expect("METRICS must be a boolean value.");
+
   let proxy = ProxyWrapper::new(DiscordProxyConfig::new(
     NewBucketStrategy::Strict,
     NewBucketStrategy::Strict,
-    Duration::from_millis(300)
+    Duration::from_millis(300),
+    enable_metrics
   ), &metrics, &storage, &https_client);
 
   let host = env::var("HOST").unwrap_or("127.0.0.1".to_string());

@@ -52,12 +52,15 @@ pub enum NewBucketStrategy {
 pub struct DiscordProxyConfig {
   global: NewBucketStrategy,
   buckets: NewBucketStrategy,
-  lock_timeout: Duration
+
+  lock_timeout: Duration,
+
+  pub enable_metrics: bool,
 }
 
 impl DiscordProxyConfig {
-  pub fn new(global: NewBucketStrategy, buckets: NewBucketStrategy, lock_timeout: Duration) -> Self {
-    Self { global, buckets, lock_timeout }
+  pub fn new(global: NewBucketStrategy, buckets: NewBucketStrategy, lock_timeout: Duration, enable_metrics: bool) -> Self {
+    Self { global, buckets, lock_timeout, enable_metrics }
   }
 }
 
@@ -73,7 +76,7 @@ pub struct DiscordProxy {
 
   metrics: Metrics,
 
-  config: DiscordProxyConfig
+  pub config: DiscordProxyConfig
 }
 
 #[derive(PartialEq)]
@@ -183,9 +186,11 @@ impl DiscordProxy {
       _ => {}
     }
 
-    self.metrics.requests.with_label_values(
-      &[&bot_id.to_string(), &method.to_string(), status.as_str(), &path]
-    ).observe(_start.elapsed().as_secs_f64());
+    if self.config.enable_metrics {
+      self.metrics.requests.with_label_values(
+        &[&bot_id.to_string(), &method.to_string(), status.as_str(), &path]
+      ).observe(_start.elapsed().as_secs_f64());
+    }
 
     // println!("Proxied request in {}ms. Status Code: {}", _start.elapsed().as_millis(), result.status());
 

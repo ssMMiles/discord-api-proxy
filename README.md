@@ -21,6 +21,7 @@ Name | Description
 `PORT` | The port to listen on. Defaults to `8080`.
 `REDIS_HOST` | The host of the Redis server. (Required)
 `REDIS_PORT` | The port of the Redis server. Defaults to `6379`.
+`METRICS` | Whether to expose Prometheus metrics on `/metrics`. Defaults to `true`.
 
 ## Credits
   - [Nirn Proxy](https://github.com/germanoeich/nirn-proxy) by [@germanoeich](https://github.com/germanoeich) - Used as a reference for bucket mappings
