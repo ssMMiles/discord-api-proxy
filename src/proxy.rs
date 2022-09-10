@@ -1,5 +1,6 @@
-use std::{ops::{DerefMut, Deref}, time::Duration};
-use hyper::{Request, Client, client::HttpConnector, Body, Response, StatusCode, http::HeaderValue, HeaderMap, header::HeaderName};
+use std::{ops::{DerefMut, Deref}, time::{Duration, SystemTime, UNIX_EPOCH}};
+use deadpool_redis::Connection;
+use hyper::{Request, Client, client::HttpConnector, Body, Response, StatusCode, http::HeaderValue};
 use hyper_tls::HttpsConnector;
 use rand::{thread_rng, distributions::Alphanumeric, Rng};
 use redis::RedisError;
@@ -63,8 +64,7 @@ pub struct DiscordProxy {
 
 #[derive(PartialEq)]
 pub enum RatelimitStatus {
-  Ok,
-  NewBucket(String),
+  Ok(Option<String>),
   GlobalRatelimited,
   BucketRatelimited,
 }
@@ -81,26 +81,14 @@ impl DiscordProxy {
     let ratelimit_status = self.check_ratelimits(&bot_id, &token, &route_info).await?;
     match ratelimit_status {
       RatelimitStatus::GlobalRatelimited => {
-        let mut res = Response::new(Body::from("You are being ratelimited."));
-        *res.status_mut() = hyper::StatusCode::TOO_MANY_REQUESTS;
-
-        res.headers_mut().insert("x-sent-by-proxy", HeaderValue::from_static("true"));
-        res.headers_mut().insert("x-ratelimit-bucket", HeaderValue::from_str(&bot_id.to_string()).unwrap());
-
-        return Ok(res);
+        // println!("Global ratelimited");
+        return Ok(generate_ratelimit_response(&bot_id.to_string()));
       },
       RatelimitStatus::BucketRatelimited => {
-        let mut res = Response::new(Body::from("You are being ratelimited."));
-        *res.status_mut() = hyper::StatusCode::TOO_MANY_REQUESTS;
-
-        res.headers_mut().insert("x-sent-by-proxy", HeaderValue::from_static("true"));
-        res.headers_mut().insert("x-ratelimit-bucket", HeaderValue::from_str(&route_info.bucket).unwrap_or("N/A".parse().unwrap()));
-
-        return Ok(res);
+        // println!("Bucket ratelimited");
+        return Ok(generate_ratelimit_response(&route_info.bucket));
       },
-      _ => {
-        // println!("Ratelimits passed! Proxying request..");
-      }
+      _ => {}
     }
 
     // println!("[{}] {}ms - {} {}", bot_id, _start.elapsed().as_millis(), method, path);
@@ -114,36 +102,67 @@ impl DiscordProxy {
       .header("Authorization", token)
       .body(req.into_body()).unwrap();
 
-    let result = self.client.request(proxied_req).await.map_err(|e| ProxyError::RequestError(e))?;
+    let sent_request = self.client.request(proxied_req);
+    let sent_request_at = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis();
 
-    if let RatelimitStatus::NewBucket(lock_value) = ratelimit_status {
-      let bucket_limit = match result.headers().get("X-RateLimit-Limit") {
-        Some(limit) => limit.to_str().unwrap().parse::<u16>().unwrap(),
-        None => 0
-      };
+    let result = sent_request.await.map_err(|e| ProxyError::RequestError(e))?;
+    // let result = Response::builder().body(Body::empty()).unwrap();
 
-      let reset_at = match result.headers().get("X-RateLimit-Reset") {
-        Some(timestamp) => timestamp.to_str().unwrap().replace(".", "").to_string(),
-        None => "0".to_string()
-      };
+    if let RatelimitStatus::Ok(bucket_lock) = ratelimit_status {
+      let redis = self.redis.clone();
+      let headers = result.headers().clone();
 
-      // println!("[{}] New bucket! Setting ratelimit to {}, resetting counter at {}", route_info.bucket, bucket_limit, reset_at);
+      let bot_id = bot_id.clone();
 
-      let mut redis = self.redis.pool.get().await.unwrap();
-      match self.redis.unlock_ratelimit_script.key(&route_info.bucket).arg(&lock_value).arg(bucket_limit).arg(reset_at).invoke_async::<_, bool>(&mut redis).await? {
-        true => {
-          // println!("[{}] Bucket ratelimit set to {} and lock released.", &route_info.bucket, &bucket_limit);
-        },
-        false => {
-          // println!("[{}] Bucket lock expired before we could release it.", &route_info.bucket);
-        }
+      if bucket_lock.is_some() {
+        tokio::task::spawn(async move {
+          let bucket_limit = match headers.get("X-RateLimit-Limit") {
+            Some(limit) => limit.to_str().unwrap().parse::<u16>().unwrap(),
+            None => 0
+          };
+    
+          let reset_at = match headers.get("X-RateLimit-Reset") {
+            Some(timestamp) => timestamp.to_str().unwrap().replace(".", "").to_string(),
+            None => "0".to_string()
+          };
+    
+          // println!("[{}] New bucket! Setting ratelimit to {}, resetting counter at {}", route_info.bucket, bucket_limit, reset_at);
+    
+          let mut redis_conn = redis.pool.get().await.unwrap();
+          match redis.unlock_ratelimit_script.key(&route_info.bucket).arg(&bucket_lock.unwrap()).arg(bucket_limit).arg(reset_at).key(bot_id.clone()).arg(&(sent_request_at as u64 + 1000)).invoke_async::<_, bool>(&mut redis_conn).await.unwrap() {
+            true => {
+              // println!("[{}] Bucket ratelimit set to {} and lock released.", &route_info.bucket, &bucket_limit);
+            },
+            false => {
+              // println!("[{}] Bucket lock expired before we could release it.", &route_info.bucket);
+            }
+          };
+        });
+      } else {
+        let global_count_key = format!("{}:count", bot_id);
+
+        tokio::task::spawn(async move {
+          let bucket_count_key = format!("{}:count", route_info.bucket);
+          let reset_at = match headers.get("X-RateLimit-Reset") {
+            Some(timestamp) => timestamp.to_str().unwrap().replace(".", "").to_string(),
+            None => "0".to_string()
+          };
+    
+          // println!("[{}] First in bucket! Resetting counter at {}", route_info.bucket, bucket_limit, reset_at);
+    
+          let mut redis_conn = redis.pool.get().await.unwrap();
+          redis::pipe()
+            .cmd("PEXPIREAT").arg(&bucket_count_key).arg(reset_at).arg("NX")
+            .cmd("PEXPIREAT").arg(&global_count_key).arg(&(sent_request_at as u64 + 1000))
+            .query_async::<Connection, ()>(&mut redis_conn).await.unwrap();
+        });
       }
     }
 
     let status = result.status();
     match status {
       StatusCode::TOO_MANY_REQUESTS => {
-        println!("Discord returned 429! Global: {:?}", result.headers().get("X-RateLimit-Global"));
+        eprintln!("Discord returned 429! Global: {:?}", result.headers().get("X-RateLimit-Global"));
       },
       _ => {}
     }
@@ -153,7 +172,7 @@ impl DiscordProxy {
     Ok(result)
   }
 
-  pub async fn check_ratelimits(&mut self, bot_id: &u64, token: &str, route: &RouteInfo) -> Result<RatelimitStatus, RedisError> {
+  async fn check_ratelimits(&mut self, bot_id: &u64, token: &str, route: &RouteInfo) -> Result<RatelimitStatus, RedisError> {
     let use_global_rl = match route.resource {
       Resources::Interactions => false,
       Resources::Webhooks => false,
@@ -166,7 +185,7 @@ impl DiscordProxy {
       return Ok(self.is_global_or_bucket_ratelimited(&bot_id, &token, route).await?);
     } else {}
 
-    Ok(RatelimitStatus::Ok)
+    Ok(RatelimitStatus::Ok(None))
   }
 
   async fn is_global_or_bucket_ratelimited(&mut self, bot_id: &u64, token: &str, route: &RouteInfo) -> Result<RatelimitStatus, RedisError> {
@@ -176,7 +195,7 @@ impl DiscordProxy {
     let mut is_global_ratelimited = false;
     let mut is_bucket_ratelimited = false;
 
-    let mut new_bucket_lock: Option<String> = None;
+    let mut bucket_lock: Option<String> = None;
 
     return loop {
       let ratelimit_results = self.redis.check_global_and_bucket_ratelimit_script.key(&bot_id).key(&route.bucket).invoke_async::<_,Vec<Option<u16>>>(&mut redis).await?;
@@ -221,46 +240,49 @@ impl DiscordProxy {
         match ratelimit {
           Some(count) => {
             let hit_ratelimit = *count == 0;
-            
+
             if hit_ratelimit {
               *is_ratelimited = true;
               break
             }
           },
           None => {
-            println!("[{}] Ratelimit not set, will try to acquire a lock and set it...", &ratelimit_key);
+            // println!("[{}] Ratelimit not set, will try to acquire a lock and set it...", &ratelimit_key);
   
             let lock_value = random_string(8);
             let lock = self.redis.lock_ratelimit_script.key(&ratelimit_key).arg(&lock_value).invoke_async::<_, bool>(&mut redis).await?;
   
             if lock {
               if ratelimit_type == "Bucket" {
-                println!("[{}] Acquired bucket lock.", ratelimit_key);
+                // println!("[{}] Acquired bucket lock.", ratelimit_key);
 
-                new_bucket_lock = Some(lock_value);
+                bucket_lock = Some(lock_value);
                 break
               }
 
-              println!("[{}] Global ratelimit lock acquired, fetching from Discord.", &ratelimit_key);
+              // println!("[{}] Global ratelimit lock acquired, fetching from Discord.", &ratelimit_key);
               let ratelimit = fetch_discord_global_ratelimit(token).await?;
   
               match self.redis.unlock_ratelimit_script.key(&ratelimit_key).arg(&lock_value).arg(ratelimit).arg(0).invoke_async::<_, bool>(&mut redis).await? {
                 true => {
-                  println!("[{}] Global ratelimit set to {} and lock released.", ratelimit_key, &ratelimit);
+                  // println!("[{}] Global ratelimit set to {} and lock released.", ratelimit_key, &ratelimit);
                 },
                 false => {
-                  println!("[{}] Global ratelimit lock expired before we could release it.", &ratelimit_key);
+                  // println!("[{}] Global ratelimit lock expired before we could release it.", &ratelimit_key);
                 }
               }
+
+              retry = true;
+              break
             } else {
               if *ratelimit_config == NewBucketStrategy::Strict {
-                println!("Lock is taken and ratelimit config is Strict, retrying in {}ms.", self.config.lock_timeout.as_millis());
+                // println!("Lock is taken and ratelimit config is Strict, retrying in {}ms.", self.config.lock_timeout.as_millis());
                 
                 retry = true;
                 break
               }
 
-              println!("Lock is taken and ratelimit config is Loose, skipping ratelimit check.");
+              // println!("Lock is taken and ratelimit config is Loose, skipping ratelimit check.");
             }
           }
         };
@@ -271,10 +293,6 @@ impl DiscordProxy {
         continue;
       }
 
-      if let Some(lock_value) = new_bucket_lock {
-        break Ok(RatelimitStatus::NewBucket(lock_value))
-      }
-
       if is_global_ratelimited {
         break Ok(RatelimitStatus::GlobalRatelimited)
       }
@@ -283,7 +301,7 @@ impl DiscordProxy {
         break Ok(RatelimitStatus::BucketRatelimited)
       }
 
-      break Ok(RatelimitStatus::Ok);
+      break Ok(RatelimitStatus::Ok(bucket_lock))
     };
   }
 }
@@ -293,6 +311,16 @@ fn random_string(n: usize) -> String {
     .take(n)
     .map(char::from)
     .collect()
+}
+
+fn generate_ratelimit_response(bucket: &str) -> Response<Body> {
+  let mut res = Response::new(Body::from("You are being ratelimited."));
+  *res.status_mut() = hyper::StatusCode::TOO_MANY_REQUESTS;
+
+  res.headers_mut().insert("x-sent-by-proxy", HeaderValue::from_static("true"));
+  res.headers_mut().insert("x-ratelimit-bucket", HeaderValue::from_str(bucket).unwrap());
+
+  res
 }
 
 #[derive(Error, Debug)]

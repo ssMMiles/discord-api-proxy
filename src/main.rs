@@ -16,16 +16,16 @@ mod buckets;
 
 #[tokio::main]
 async fn main() {
+  let signal_guard = SignalGuard::new();
+
   println!("Starting API proxy.");
 
   let redis_host = env::var("REDIS_HOST")
-  .expect("REDIS_PORT env var is not set");
-
+    .expect("REDIS_PORT env var is not set");
   let redis_port = env::var("REDIS_PORT").unwrap_or("6379".to_string())
     .parse::<u16>().expect("REDIS_PORT must be a valid port number.");
   
   let storage = RedisClient::new(&redis_host, redis_port).await;
-
   println!("Connected to Redis.");
 
   let https = HttpsConnector::new();
@@ -33,8 +33,8 @@ async fn main() {
     .build::<_, hyper::Body>(https);
 
   let proxy = ProxyWrapper::new(DiscordProxyConfig::new(
-    NewBucketStrategy::Loose, 
-    NewBucketStrategy::Strict, 
+    NewBucketStrategy::Strict,
+    NewBucketStrategy::Strict,
     Duration::from_millis(300)
   ), &storage, &https_client);
 
@@ -48,8 +48,7 @@ async fn main() {
 
   // Graceful shutdown channel
   let (tx, mut rx) = watch::channel(false);
-
-  let http_server = tokio::task::spawn(async move {
+  tokio::task::spawn(async move {
     loop {
       tokio::select! {
         res = listener.accept() => {
@@ -68,15 +67,15 @@ async fn main() {
             tokio::select! {
               res = &mut conn => {
                 if let Err(err) = res {
-                  let cause = match err.into_cause() {
-                    Some(cause) => cause,
-                    None => {
-                      // eprintln!("Unknown error serving connection.");
-                      return;
-                    },
-                  };
-                    
-                  eprintln!("Error serving connection: {:?}", cause);
+                  if err.is_incomplete_message() {
+                    eprintln!("Incomplete message.");
+                  } else if err.is_closed() {
+                    eprintln!("Sender channel closed.");
+                  } else if err.is_canceled() {
+                    eprintln!("Request canceled.");
+                  } else if err.is_connect() {
+                    eprintln!("Error serving connection: {:?}", err);
+                  }
                 }
               }
               // Polling for graceful shutdown.
@@ -93,8 +92,6 @@ async fn main() {
     }
   });
 
-  let signal_guard = SignalGuard::new();
-
   signal_guard.at_exit(move | sig | {
     match sig {
       15 => {
@@ -106,10 +103,4 @@ async fn main() {
       }
     }
   });
-
-  tokio::select! {
-    _ = http_server => {
-      println!("HTTP Server terminated.");
-    }
-  }
 }

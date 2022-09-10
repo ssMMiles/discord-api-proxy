@@ -46,7 +46,9 @@ pub struct RouteInfo {
 
 pub fn get_route_info(bot_id: &u64, method: &Method, path: &str) -> RouteInfo {
   let route_segments = path.split("/").skip(3).collect::<Vec<&str>>();
-  let mut bucket = String::from(format!("{}:{}/", method.as_str(), bot_id));
+  let mut bucket = String::new();
+
+  bucket.push_str(&format!("{}:{}/", method.as_str(), bot_id));
 
   let major_resource = Resources::from_str(route_segments[0]);
   let major_bucket = match major_resource {
@@ -55,9 +57,11 @@ pub fn get_route_info(bot_id: &u64, method: &Method, path: &str) -> RouteInfo {
     },
     Resources::Channels => {
       if route_segments.len() == 2 {
-        return RouteInfo { 
+        bucket.push_str("channels/!");
+
+        return RouteInfo {
           resource: major_resource, 
-          bucket: "channels/!".to_string() 
+          bucket
         };
       }
 
@@ -65,22 +69,32 @@ pub fn get_route_info(bot_id: &u64, method: &Method, path: &str) -> RouteInfo {
     },
     Resources::Guilds => {
       if route_segments.len() == 3 && route_segments[2] == "channels" {
+        bucket.push_str("guilds/!/channels");
+
         return RouteInfo { 
           resource: major_resource, 
-          bucket: "guilds/!/channels".to_string() 
+          bucket
         };
       }
 
-      format!("{}/{}", route_segments[0], route_segments[1])
+      if route_segments.len() >= 2 {
+        format!("{}/{}", route_segments[0], route_segments[1])
+      } else {
+        route_segments[0].to_string()
+      }
     },
     _ => {
-      format!("{}/{}", route_segments[0], route_segments[1])
+      if route_segments.len() >= 2 {
+        format!("{}/{}", route_segments[0], route_segments[1])
+      } else {
+        route_segments[0].to_string()
+      }
     }
   };
 
   bucket.push_str(&major_bucket);
 
-  if route_segments.len() == 2 {
+  if route_segments.len() <= 2 {
     return RouteInfo { resource: major_resource, bucket }
   }
 
