@@ -2,17 +2,16 @@
 A transparent proxy for handling Discord's API ratelimits.
 
 ## Todo
- - Metrics
- - Finish/cleanup route specific ratelimiting, not tested much
+ - Fix race condition in global ratelimit
  - Refactor everything, it's a mess
 
 ## Usage
 
-Once up and running, just send any requests you would normally send to `https://discord.com/api/v*` to `http://YOURPROXY/api/v*`.
+Once up and running, just send your normal requests to `http://YOURPROXY/api/v*` instead of `https://discord.com/api/v*`.
 
-You'll get back all the same responses as Discord, except when one would have hit a 429 - then you'll get a 429 from the proxy instead with `x-sent-by-proxy` and `x-ratelimit-bucket` headers.
+You'll get back all the same responses, except when you would have hit a ratelimit - then you'll get a 429 from the proxy with `x-sent-by-proxy` and `x-ratelimit-bucket` headers
 
-When you do hit a 429, you can just retry the request until it works. If that's happening a lot, just stop hitting them.
+If you hit a 429, you can just retry the request until it works. If that's happening a lot, just stop hitting them.
 
 #### Environment Variables
 Name | Description
@@ -23,5 +22,5 @@ Name | Description
 `REDIS_PORT` | The port of the Redis server. Defaults to `6379`.
 
 ## Credits
-  - [Nirn Proxy](https://github.com/germanoeich/nirn-proxy) by [@germanoeich](https://github.com/germanoeich) - Used as a reference for mapping routes to shared buckets
+  - [Nirn Proxy](https://github.com/germanoeich/nirn-proxy) by [@germanoeich](https://github.com/germanoeich) - Used as a reference for bucket mappings
   

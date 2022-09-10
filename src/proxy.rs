@@ -2,6 +2,7 @@ use std::{ops::{DerefMut, Deref}, time::{Duration, SystemTime, UNIX_EPOCH}};
 use deadpool_redis::Connection;
 use hyper::{Request, Client, client::HttpConnector, Body, Response, StatusCode, http::HeaderValue};
 use hyper_tls::HttpsConnector;
+use prometheus::HistogramVec;
 use rand::{thread_rng, distributions::Alphanumeric, Rng};
 use redis::RedisError;
 use thiserror::Error;
@@ -15,9 +16,14 @@ pub struct ProxyWrapper {
 }
 
 impl ProxyWrapper {
-  pub fn new(config: DiscordProxyConfig, redis: &RedisClient, client: &Client<HttpsConnector<HttpConnector>>) -> Self {
+  pub fn new(config: DiscordProxyConfig, metrics: &Metrics, redis: &RedisClient, client: &Client<HttpsConnector<HttpConnector>>) -> Self {
     Self { 
-      proxy: DiscordProxy { config: config.clone(), redis: redis.clone(), client: client.clone() }
+      proxy: DiscordProxy { 
+        config: config.clone(), 
+        metrics: metrics.clone(), 
+        redis: redis.clone(), 
+        client: client.clone() 
+      }
     }
   }
 }
@@ -56,9 +62,17 @@ impl DiscordProxyConfig {
 }
 
 #[derive(Clone)]
+pub struct Metrics {
+  pub requests: HistogramVec,
+}
+
+#[derive(Clone)]
 pub struct DiscordProxy {
   redis: RedisClient,
   client: Client<HttpsConnector<HttpConnector>>,
+
+  metrics: Metrics,
+
   config: DiscordProxyConfig
 }
 
@@ -166,6 +180,10 @@ impl DiscordProxy {
       },
       _ => {}
     }
+
+    self.metrics.requests.with_label_values(
+      &[&bot_id.to_string(), &method.to_string(), status.as_str(), &path]
+    ).observe(_start.elapsed().as_secs_f64());
 
     // println!("Proxied request in {}ms. Status Code: {}", _start.elapsed().as_millis(), result.status());
 

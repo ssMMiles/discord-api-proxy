@@ -1,10 +1,11 @@
 use std::convert::Infallible;
 use base64::decode;
 use hyper::{Body, Request, Response, StatusCode};
+use prometheus::{Registry, TextEncoder, Encoder};
 
 use crate::proxy::ProxyWrapper;
 
-pub async fn route(req: Request<Body>, proxy: ProxyWrapper) -> Result<Response<Body>, Infallible> {
+pub async fn route(req: Request<Body>, proxy: ProxyWrapper, registry: Registry) -> Result<Response<Body>, Infallible> {
   let path = req.uri().path();
 
   if path.starts_with("/api/v") {
@@ -12,8 +13,14 @@ pub async fn route(req: Request<Body>, proxy: ProxyWrapper) -> Result<Response<B
   } else if path == "/health" {
     Ok(Response::new(Body::from("OK")))
   } else if path == "/metrics" {
-    // TODO: implement metrics
-    Ok(Response::new(Body::from("Not implemented")))
+    
+    // Gather the metrics.
+    let mut buffer = vec![];
+    let encoder = TextEncoder::new();
+    let metric_families = registry.gather();
+    encoder.encode(&metric_families, &mut buffer).unwrap();
+
+    Ok(Response::new(Body::from(String::from_utf8(buffer).unwrap())))
   } else {
     Ok(Response::builder().status(StatusCode::NOT_FOUND).body(Body::empty()).unwrap())
   }
