@@ -135,7 +135,7 @@ pub fn unlock_ratelimit_script() -> Script {
       if global_rl_expire_at ~= nil then
         local global_rl_count_key = KEYS[2] .. ':count'
 
-        redis.call('PEXPIREAT', global_rl_count_key, global_rl_expire_at)
+        redis.call('PEXPIREAT', global_rl_count_key, global_rl_expire_at, 'NX')
       end
 
       redis.call('DEL', rl_lock_key)

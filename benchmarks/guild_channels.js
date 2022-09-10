@@ -3,9 +3,11 @@ import { sleep } from 'k6';
 
 export const options = {
   stages: [
-    { duration: '60s', target: 1000 },
-    // { duration: '5s', target: 2000 },
-    // { duration: '5s', target: 3000 },
+    { duration: '5s', target: 250 },
+    { duration: '5s', target: 500 },
+    { duration: '10s', target: 2000 },
+    { duration: '5s', target: 3000 },
+    { duration: '5s', target: 0 }
   ],
 };
 
@@ -14,7 +16,7 @@ export default function () {
 
   let req = {
     method: 'GET',
-    url: `${BASE_URL}/guilds/690255418060046348/channels`,
+    url: `${BASE_URL}/guilds/690255418060046348`,
 
     params: {
       headers: {

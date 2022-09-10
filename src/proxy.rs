@@ -45,7 +45,7 @@ impl DerefMut for ProxyWrapper {
 #[derive(Clone, PartialEq)]
 pub enum NewBucketStrategy {
   Strict,
-  Loose
+  // Loose
 }
 
 #[derive(Clone)]
@@ -117,9 +117,11 @@ impl DiscordProxy {
       .body(req.into_body()).unwrap();
 
     let sent_request = self.client.request(proxied_req);
-    let sent_request_at = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis();
+    // let sent_request_at = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis();
 
     let result = sent_request.await.map_err(|e| ProxyError::RequestError(e))?;
+    let sent_request_at = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis();
+    
     // let result = Response::builder().body(Body::empty()).unwrap();
 
     if let RatelimitStatus::Ok(bucket_lock) = ratelimit_status {
@@ -167,7 +169,7 @@ impl DiscordProxy {
           let mut redis_conn = redis.pool.get().await.unwrap();
           redis::pipe()
             .cmd("PEXPIREAT").arg(&bucket_count_key).arg(reset_at).arg("NX")
-            .cmd("PEXPIREAT").arg(&global_count_key).arg(&(sent_request_at as u64 + 1000))
+            .cmd("PEXPIREAT").arg(&global_count_key).arg(&(sent_request_at as u64 + 1000)).arg("NX")
             .query_async::<Connection, ()>(&mut redis_conn).await.unwrap();
         });
       }
