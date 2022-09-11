@@ -8,6 +8,16 @@ A transparent, Redis backed proxy for handling Discord's API ratelimits.
 
 ## Usage
 
+The easiest way to run the proxy for yourself is Docker, images are available [here](https://hub.docker.com/r/ssmmiles/discord-api-proxy).
+
+```bash
+docker run -d \
+  -p 8080:8080 \
+  -e HOST=0.0.0.0 \
+  -e REDIS_HOST=redis \
+  ssmmiles/discord-api-proxy
+```
+
 Once up and running, just send your normal requests to `http://YOURPROXY/api/v*` instead of `https://discord.com/api/v*`.
 
 You'll get back all the same responses, except when you would have hit a ratelimit - then you'll get a 429 from the proxy with `x-sent-by-proxy` and `x-ratelimit-bucket` headers
