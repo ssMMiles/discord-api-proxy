@@ -21,7 +21,7 @@ async fn main() {
   let signal_guard = SignalGuard::new();
 
   let redis_host = env::var("REDIS_HOST")
-    .expect("REDIS_PORT env var is not set");
+    .expect("REDIS_HOST env var is not set");
   let redis_port = env::var("REDIS_PORT").unwrap_or("6379".to_string())
     .parse::<u16>().expect("REDIS_PORT must be a valid port number.");
   
