@@ -5,14 +5,14 @@ use hyper_tls::HttpsConnector;
 use prometheus::Registry;
 use tokio::{net::TcpListener, sync::watch};
 
-use crate::{proxy::{ProxyWrapper, NewBucketStrategy, DiscordProxyConfig, Metrics}, routes::route, redis::client::RedisClient};
+use crate::{proxy::{ProxyWrapper, NewBucketStrategy, DiscordProxyConfig, Metrics}, routes::route, redis::RedisClient};
 
 mod redis;
 
 mod routes;
 mod proxy;
 
-mod global_rl;
+mod discord;
 mod buckets;
 
 #[tokio::main]
@@ -25,7 +25,10 @@ async fn main() {
   let redis_port = env::var("REDIS_PORT").unwrap_or("6379".to_string())
     .parse::<u16>().expect("REDIS_PORT must be a valid port number.");
   
-  let storage = RedisClient::new(&redis_host, redis_port).await;
+  let redis_pool_size = env::var("REDIS_POOL_SIZE").unwrap_or("64".to_string())
+    .parse::<usize>().expect("REDIS_POOL_SIZE must be a valid integer.");
+
+  let storage = RedisClient::new(&redis_host, redis_port, redis_pool_size).await;
   println!("Connected to Redis.");
 
   let https = HttpsConnector::new();
@@ -36,7 +39,9 @@ async fn main() {
   let request_histogram = prometheus::HistogramVec::new(prometheus::HistogramOpts::new(
     "request_results",
     "Results of attempted Discord API requests."
-  ).buckets(vec![0.1, 0.25, 0.5, 1.0, 2.5]), &["bot_id", "method", "route", "status"]).unwrap();
+  ).buckets(
+    vec![0.1, 0.25, 0.5, 1.0, 2.5]),
+    &["bot_id", "method", "route", "status"]).unwrap();
 
   prometheus_registry.register(Box::new(request_histogram.clone())).unwrap();
 

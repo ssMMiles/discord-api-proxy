@@ -1,10 +1,10 @@
-# WIP - Discord API Proxy
-A transparent proxy for handling Discord's API ratelimits.
+# Discord API Proxy
+A transparent, Redis backed proxy for handling Discord's API ratelimits.
 
 ## Todo
  - Look into better solutions for getting the start time on the global ratelimit bucket, as 
   we currently wait for a response to be safe - in exchange for 15-25% less actual throughput.
- - Refactor everything, it's a mess
+ - Logging
 
 ## Usage
 
