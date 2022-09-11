@@ -1,5 +1,6 @@
-use std::{ops::{DerefMut, Deref}, time::{Duration, SystemTime, UNIX_EPOCH}};
-use hyper::{Request, Client, client::HttpConnector, Body, Response, StatusCode, http::HeaderValue, HeaderMap};
+use std::{ops::{DerefMut, Deref}, time::{Duration, SystemTime, UNIX_EPOCH}, str::FromStr};
+use base64::decode;
+use hyper::{Request, Client, client::HttpConnector, Body, Response, StatusCode, http::{HeaderValue, uri::PathAndQuery}, HeaderMap, Uri};
 use hyper_tls::HttpsConnector;
 use prometheus::HistogramVec;
 use rand::{thread_rng, distributions::Alphanumeric, Rng};
@@ -85,13 +86,23 @@ pub enum RatelimitStatus {
 }
 
 impl DiscordProxy {
-  pub async fn proxy_request(&mut self, bot_id: &u64, token: &str, req: Request<Body>) -> Result<Response<Body>, ProxyError> {
+  pub async fn proxy_request(&mut self, mut req: Request<Body>) -> Result<Response<Body>, ProxyError> {
     let start = Instant::now();
-    
+
     let method = req.method().clone();
     let path = req.uri().path().to_string();
+    
+    let mut route_info = get_route_info(&method, &path);
 
-    let route_info = get_route_info(bot_id, &method, &path);
+    let (token, bot_id) = match parse_headers(req.headers(), &route_info) {
+      Ok((token, bot_id)) => (token, bot_id),
+      Err(message) => return Ok(
+        Response::builder().status(400).body(message.into()).unwrap()
+      )
+    };
+    
+    route_info.bucket.push_str(&format!("{}:{}/", method.as_str(), bot_id));
+
     let ratelimit_status = self.check_ratelimits(&bot_id, &token, &route_info).await?;
 
     match ratelimit_status {
@@ -104,21 +115,22 @@ impl DiscordProxy {
       _ => {}
     }
 
-    // println!("[{}] {}ms - {} {}", bot_id, _start.elapsed().as_millis(), method, path);
+    // println!("[{}] {}ms - {} {}", bot_id, start.elapsed().as_millis(), method, path);
 
-    let uri = format!("https://discord.com{}", path);
-    let proxied_req = Request::builder()
-      .header("User-Agent", "RockSolidRobots Discord Proxy/1.0")
-      .uri(&uri)
-      .method(&method)
-      .header("Authorization", token)
-      .body(req.into_body()).unwrap();
+    req.headers_mut().insert("Host", HeaderValue::from_static("discord.com"));
+    req.headers_mut().insert("User-Agent", HeaderValue::from_static("RockSolidRobots Discord Proxy/1.0"));
+    
+    let path_and_query = match req.uri().path_and_query() {
+      Some(path_and_query) => path_and_query.clone(),
+      None => PathAndQuery::from_static("/")
+    };
+    *req.uri_mut() = Uri::from_str(&format!("https://discord.com{}", path_and_query)).unwrap();
 
-    let result = self.client.request(proxied_req).await.map_err(|e| ProxyError::RequestError(e))?;
+    let result = self.client.request(req).await.map_err(|e| ProxyError::RequestError(e))?;
     let sent_request_at = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis();
 
     if let RatelimitStatus::Ok(bucket_lock) = ratelimit_status {
-      match self.update_ratelimits(*bot_id, result.headers(), route_info.bucket, bucket_lock, sent_request_at).await {
+      match self.update_ratelimits(bot_id, result.headers(), route_info.bucket, bucket_lock, sent_request_at).await {
         Ok(_) => {},
         Err(e) => {
           eprintln!("Error updating ratelimits after proxying request: {}", e);
@@ -140,12 +152,12 @@ impl DiscordProxy {
       ).observe(start.elapsed().as_secs_f64());
     }
 
-    // println!("Proxied request in {}ms. Status Code: {}", _start.elapsed().as_millis(), result.status());
+    // println!("Proxied request in {}ms. Status Code: {}", start.elapsed().as_millis(), result.status());
 
     Ok(result)
   }
 
-  async fn check_ratelimits(&mut self, bot_id: &u64, token: &str, route: &RouteInfo) -> Result<RatelimitStatus, RedisErrorWrapper> {
+  async fn check_ratelimits(&mut self, bot_id: &u64, token: &str, route: &RouteInfo) -> Result<RatelimitStatus, RedisErrorWrapper> {  
     let use_global_rl = match route.resource {
       Resources::Interactions => false,
       Resources::Webhooks => false,
@@ -287,7 +299,7 @@ impl DiscordProxy {
           .invoke_async::<_, bool>(&mut redis).await?;
 
           if lock {
-            // println!("[{}] Acquired bucket lock.", bucket_rl_key);
+            // println!("[{}] Acquired bucket lock.", route.bucket);
 
             break Ok(RatelimitStatus::Ok(Some(lock_value)))
           } else {
@@ -354,6 +366,66 @@ impl DiscordProxy {
 
     Ok(())
   }
+}
+
+fn parse_headers(headers: &HeaderMap, route: &RouteInfo) -> Result<(String, u64), String> {
+  if route.resource == Resources::Webhooks || route.resource == Resources::Interactions {
+    let mut path_segments = route.bucket.split("/").skip(1);
+
+    let id = match path_segments.next() {
+      Some(id) => id.parse::<u64>().map_err(|_| "Invalid ID")?,
+      None => return Err("Invalid ID".to_string())
+    };
+
+    let token = match path_segments.next() {
+      Some(token) => token.parse::<String>().map_err(|_| "Invalid Token")?,
+      None => return Err("Invalid Token".to_string())
+    };
+
+    return Ok((token, id))
+  }
+
+  // if a token retrieval function is not configured, use that instead of this
+  let token = match headers.get("Authorization") {
+    Some(header) => {
+      let token = match header.to_str() {
+        Ok(token) => token,
+        Err(_) => return Err("Invalid Authorization header".to_string())
+      };
+
+      if !token.starts_with("Bot ") {
+        return Err("Invalid Authorization header".to_string())
+      }
+
+      token.to_string()
+    },
+    None => return Err("Missing Authorization header".to_string())
+  };
+
+  let base64_bot_id = match token[4..].split('.').nth(0) {
+    Some(base64_bot_id) => base64_bot_id,
+    None => return Err("Invalid Authorization header b64".to_string())
+  };
+
+  let bot_id_b = decode(base64_bot_id).map_err(|e| {
+    eprintln!("Error decoding base64 bot id: {:?}", e);
+
+    "Invalid Authorization header".to_string()
+  })?;
+
+  let bot_id_s = String::from_utf8(bot_id_b).map_err(|e| {
+    eprintln!("Error decoding base64 bot as string: {:?}", e);
+
+    "Invalid Authorization header".to_string()
+  })?;
+
+  let bot_id = bot_id_s.parse::<u64>().map_err(|e| {
+    eprintln!("Error parsing bot id as u64: {:?}", e);
+
+    "Invalid Authorization header".to_string()
+  })?;
+
+  Ok((token, bot_id))
 }
 
 fn random_string(n: usize) -> String {

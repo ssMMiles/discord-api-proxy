@@ -44,11 +44,9 @@ pub struct RouteInfo {
   pub bucket: String,
 }
 
-pub fn get_route_info(bot_id: &u64, method: &Method, path: &str) -> RouteInfo {
+pub fn get_route_info(method: &Method, path: &str) -> RouteInfo {
   let route_segments = path.split("/").skip(3).collect::<Vec<&str>>();
   let mut bucket = String::new();
-
-  bucket.push_str(&format!("{}:{}/", method.as_str(), bot_id));
 
   let major_resource = Resources::from_str(route_segments[0]);
   let major_bucket = match major_resource {
