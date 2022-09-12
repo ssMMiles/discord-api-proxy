@@ -18,7 +18,6 @@ mod buckets;
 #[tokio::main]
 async fn main() {
   println!("Starting API proxy.");
-  let signal_guard = SignalGuard::new();
 
   let redis_host = env::var("REDIS_HOST").unwrap_or("127.0.0.1".to_string());
   let redis_port = env::var("REDIS_PORT").unwrap_or("6379".to_string())
@@ -90,13 +89,13 @@ async fn main() {
               res = &mut conn => {
                 if let Err(err) = res {
                   if err.is_incomplete_message() {
-                    eprintln!("Incomplete message.");
+                    // eprintln!("Incomplete message.");
                   } else if err.is_closed() {
-                    eprintln!("Sender channel closed.");
+                    // eprintln!("Sender channel closed.");
                   } else if err.is_canceled() {
-                    eprintln!("Request canceled.");
+                    // eprintln!("Request canceled.");
                   } else if err.is_connect() {
-                    eprintln!("Error serving connection: {:?}", err);
+                    // eprintln!("Error serving connection: {:?}", err);
                   }
                 }
               }
@@ -114,7 +113,7 @@ async fn main() {
     }
   });
 
-  signal_guard.at_exit(move | sig | {
+  SignalGuard::new().at_exit(move | sig | {
     match sig {
       15 => {
         println!("Received SIGTERM, shutting down...");
