@@ -20,8 +20,7 @@ async fn main() {
   println!("Starting API proxy.");
   let signal_guard = SignalGuard::new();
 
-  let redis_host = env::var("REDIS_HOST")
-    .expect("REDIS_HOST env var is not set");
+  let redis_host = env::var("REDIS_HOST").unwrap_or("127.0.0.1".to_string());
   let redis_port = env::var("REDIS_PORT").unwrap_or("6379".to_string())
     .parse::<u16>().expect("REDIS_PORT must be a valid port number.");
   
