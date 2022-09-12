@@ -101,7 +101,10 @@ impl DiscordProxy {
       )
     };
     
-    route_info.bucket.push_str(&format!("{}:{}/", method.as_str(), bot_id));
+    let mut bucket_prefix = format!("{}:{}/", method.as_str(), bot_id);
+    bucket_prefix.push_str(&route_info.bucket);
+
+    route_info.bucket = bucket_prefix;
 
     let ratelimit_status = self.check_ratelimits(&bot_id, &token, &route_info).await?;
 
