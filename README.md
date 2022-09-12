@@ -1,6 +1,8 @@
 # Discord API Proxy
 A transparent, Redis backed proxy for handling Discord's API ratelimits.
 
+### Don't use this in production yet, the global ratelimiter has some issues under very heavy load.
+
 ## Todo
  - Look into better solutions for getting the start time on the global ratelimit bucket, as 
   we currently wait for a response to be safe - in exchange for 15-25% less actual throughput.

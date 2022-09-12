@@ -140,6 +140,7 @@ impl DiscordProxy {
 
     let status = result.status();
     match status {
+      StatusCode::OK => {}
       StatusCode::TOO_MANY_REQUESTS => {
         eprintln!("Discord returned 429! Global: {:?}", result.headers().get("X-RateLimit-Global"));
       },
@@ -174,7 +175,7 @@ impl DiscordProxy {
   }
 
   async fn is_global_or_bucket_ratelimited(&mut self, bot_id: &u64, token: &str, route: &RouteInfo) -> Result<RatelimitStatus, RedisErrorWrapper> {
-    let mut redis = self.redis.pool.get().await.unwrap();
+    let mut redis = self.redis.pool.get().await?;
     let global_rl_key = bot_id.to_string();
 
     loop {
@@ -186,7 +187,7 @@ impl DiscordProxy {
       let global_ratelimit = ratelimits[0];
       let route_ratelimit = ratelimits[1];
 
-      // println!("[{}] Bucket Ratelimit Status: {} - Count: {}", bot_id, &ratelimit&route.bucket);
+      // println!("[{}] Ratelimit Status - Global: {:?} - [{}]: {:?}", bot_id, &global_ratelimit, &route.bucket, &route_ratelimit);
 
       match global_ratelimit {
         Some(count) => {
