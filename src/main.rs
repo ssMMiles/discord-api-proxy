@@ -67,7 +67,7 @@ async fn main() {
 
   // Graceful shutdown channel
   let (tx, mut rx) = watch::channel(false);
-  tokio::task::spawn(async move {
+  let webserver = tokio::task::spawn(async move {
     loop {
       tokio::select! {
         res = listener.accept() => {
@@ -124,4 +124,10 @@ async fn main() {
       }
     }
   });
+
+  tokio::select! {
+    _ = webserver => {
+      println!("Webserver exited.");
+    }
+  }
 }
