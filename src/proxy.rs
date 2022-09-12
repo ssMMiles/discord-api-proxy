@@ -1,4 +1,4 @@
-use std::{ops::{DerefMut, Deref}, time::{Duration, SystemTime, UNIX_EPOCH}, str::FromStr};
+use std::{ops::{DerefMut, Deref}, time::{Duration, SystemTime, UNIX_EPOCH}, str::FromStr, process::exit};
 use base64::decode;
 use hyper::{Request, Client, client::HttpConnector, Body, Response, StatusCode, http::{HeaderValue, uri::PathAndQuery}, HeaderMap, Uri};
 use hyper_tls::HttpsConnector;
@@ -83,6 +83,7 @@ pub enum RatelimitStatus {
   Ok(Option<String>),
   GlobalRatelimited,
   RouteRatelimited,
+  ProxyOverloaded
 }
 
 impl DiscordProxy {
@@ -115,6 +116,9 @@ impl DiscordProxy {
       RatelimitStatus::RouteRatelimited => {
         return Ok(generate_ratelimit_response(&route_info.bucket));
       },
+      RatelimitStatus::ProxyOverloaded => {
+        return Ok(Response::builder().status(503).body("Proxy Overloaded".into()).unwrap());
+      },
       _ => {}
     }
 
@@ -146,8 +150,11 @@ impl DiscordProxy {
       StatusCode::OK => {}
       StatusCode::TOO_MANY_REQUESTS => {
         eprintln!("Discord returned 429! Global: {:?}", result.headers().get("X-RateLimit-Global"));
+        exit(1);
       },
-      _ => {}
+      _ => {
+        // eprintln!("Discord returned non 200 status code {}!", status.as_u16());
+      }
     }
 
     if self.config.enable_metrics {
@@ -182,6 +189,8 @@ impl DiscordProxy {
     let global_rl_key = bot_id.to_string();
 
     loop {
+      let ratelimit_check_started_at = Instant::now();
+
       let ratelimits = RedisClient::check_global_and_route_ratelimits()
         .key(&bot_id)
         .key(&route.bucket)
@@ -191,6 +200,10 @@ impl DiscordProxy {
       let route_ratelimit = ratelimits[1];
 
       // println!("[{}] Ratelimit Status - Global: {:?} - [{}]: {:?}", bot_id, &global_ratelimit, &route.bucket, &route_ratelimit);
+
+      if ratelimit_check_is_overloaded(ratelimit_check_started_at) {
+        break Ok(RatelimitStatus::ProxyOverloaded);
+      }
 
       match global_ratelimit {
         Some(count) => {
@@ -279,9 +292,15 @@ impl DiscordProxy {
     let mut redis = self.redis.pool.get().await.unwrap();
 
     return loop {
+      let ratelimit_check_started_at = Instant::now();
+
       let ratelimit = RedisClient::check_route_ratelimit()
         .key(&route.bucket)
       .invoke_async::<_,Option<u16>>(&mut redis).await?;
+
+      if ratelimit_check_is_overloaded(ratelimit_check_started_at) {
+        break Ok(RatelimitStatus::ProxyOverloaded);
+      }
 
       // println!("[{}] Bucket Ratelimit Status: {} - Count: {}", bot_id, &ratelimit&route.bucket);
 
@@ -430,6 +449,21 @@ fn parse_headers(headers: &HeaderMap, route: &RouteInfo) -> Result<(String, u64)
   })?;
 
   Ok((token, bot_id))
+}
+
+fn ratelimit_check_is_overloaded(started_at: Instant) -> bool {
+  let time_taken = started_at.elapsed().as_millis();
+
+  if time_taken > 50 {
+    eprintln!("[FATAL] Redis took over {}ms to respond. Request aborted.", time_taken);
+    return true;
+  } else if time_taken > 25 {
+    eprintln!("[WARN] Redis took over {}ms to respond. The proxy is getting overloaded.", time_taken);
+  } else {
+    // println!("[DEBUG] Redis took {}ms to respond.", time_taken);
+  }
+
+  false
 }
 
 fn random_string(n: usize) -> String {

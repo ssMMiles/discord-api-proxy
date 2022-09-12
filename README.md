@@ -1,8 +1,6 @@
 # Discord API Proxy
 A transparent, Redis backed proxy for handling Discord's API ratelimits.
 
-### Don't use this in production yet, the global ratelimiter has some issues under very heavy load.
-
 ## Todo
  - Look into better solutions for getting the start time on the global ratelimit bucket, as 
   we currently wait for a response to be safe - in exchange for 15-25% less actual throughput.
@@ -34,6 +32,12 @@ Name | Description
 `REDIS_HOST` | The host of the Redis server. Defaults to `127.0.0.1`.
 `REDIS_PORT` | The port of the Redis server. Defaults to `6379`.
 `METRICS` | Whether to expose Prometheus metrics on `/metrics`. Defaults to `true`.
+
+#### Warnings
+
+Under extreme load, Redis calls to check ratelimits may start to slow down, causing the global ratelimit bucket expiry to drift. We try to mitigate this by monitoring the time taken for ratelimit checks and aborting the request when overloaded, but some can still slip through.
+
+In the event that the proxy does receive a 429 from Discord, it will immediately exit to prevent further damage. This is considered fatal and may leave Redis in a bad state.
 
 ## Credits
   - [Nirn Proxy](https://github.com/germanoeich/nirn-proxy) by [@germanoeich](https://github.com/germanoeich) - Used as a reference for bucket mappings
