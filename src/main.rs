@@ -1,5 +1,4 @@
 use std::{net::SocketAddr, env, time::Duration};
-use graceful::SignalGuard;
 use hyper::{Client, service::{service_fn}, server::conn::Http};
 use hyper_tls::HttpsConnector;
 use prometheus::Registry;
@@ -18,6 +17,18 @@ mod discord;
 
 #[tokio::main]
 async fn main() {
+  // Graceful shutdown channel
+  let (tx, mut rx) = watch::channel(false);
+
+  tokio::task::spawn(async move {
+    ctrlc::set_handler(
+      move || match tx.send(false) {
+        Err(_) => eprintln!("Failed to send shutdown signal."),
+        _ => ()
+      })
+    .expect("Failed to set Ctrl-C handler.");
+  });
+
   println!("Starting API proxy.");
 
   let redis_host = env::var("REDIS_HOST").unwrap_or("127.0.0.1".to_string());
@@ -66,8 +77,6 @@ async fn main() {
   
   println!("Starting HTTP Server on http://{}", addr);
 
-  // Graceful shutdown channel
-  let (tx, mut rx) = watch::channel(false);
   let webserver = tokio::task::spawn(async move {
     loop {
       tokio::select! {
@@ -110,18 +119,6 @@ async fn main() {
         _ = rx.changed() => {
           break;
         }
-      }
-    }
-  });
-
-  SignalGuard::new().at_exit(move | sig | {
-    match sig {
-      15 => {
-        println!("Received SIGTERM, shutting down...");
-        tx.send(false).unwrap();
-      },
-      _ => {
-        println!("Received signal {}", sig);
       }
     }
   });
