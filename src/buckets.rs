@@ -1,5 +1,4 @@
 use std::time::{SystemTime, UNIX_EPOCH};
-
 use hyper::Method;
 
 #[derive(Debug, PartialEq)]
@@ -41,62 +40,69 @@ impl ToString for Resources {
 
 pub struct RouteInfo {
   pub resource: Resources,
-  pub bucket: String,
+  pub route: String,
+}
+
+pub fn get_route_bucket(bot_id: u64, method: &Method, route: &str) -> String {
+  format!("{}:{}-{}", bot_id, method.to_string(), route)
 }
 
 pub fn get_route_info(method: &Method, path: &str) -> RouteInfo {
-  let route_segments = path.split("/").skip(3).collect::<Vec<&str>>();
-  let mut bucket = String::new();
+  let path_segments = path.split("/").skip(3).collect::<Vec<&str>>();
+  let mut route = String::new();
 
-  let major_resource = Resources::from_str(route_segments[0]);
+  let major_resource = Resources::from_str(path_segments[0]);
   let major_bucket = match major_resource {
     Resources::Invites => {
       "invites/!".to_string()
     },
     Resources::Channels => {
-      if route_segments.len() == 2 {
-        bucket.push_str("channels/!");
+      if path_segments.len() == 2 {
+        route.push_str("channels/!");
 
         return RouteInfo {
           resource: major_resource, 
-          bucket
+          route
         };
       }
 
-      format!("channels/{}", route_segments[1])
+      format!("channels/{}", path_segments[1])
     },
     Resources::Guilds => {
-      if route_segments.len() == 3 && route_segments[2] == "channels" {
-        bucket.push_str("guilds/!/channels");
+      if path_segments.len() == 3 && path_segments[2] == "channels" {
+        route.push_str("guilds/!/channels");
 
         return RouteInfo { 
           resource: major_resource, 
-          bucket
+          route
         };
       }
 
-      if route_segments.len() >= 2 {
-        format!("{}/{}", route_segments[0], route_segments[1])
+      if path_segments.len() >= 2 {
+        format!("{}/{}", path_segments[0], path_segments[1])
       } else {
-        route_segments[0].to_string()
+        path_segments[0].to_string()
       }
     },
     _ => {
-      if route_segments.len() >= 2 {
-        format!("{}/{}", route_segments[0], route_segments[1])
+      if path_segments.len() >= 2 {
+        format!("{}/{}", path_segments[0], path_segments[1])
       } else {
-        route_segments[0].to_string()
+        path_segments[0].to_string()
       }
     }
   };
 
-  bucket.push_str(&major_bucket);
+  route.push_str(&major_bucket);
 
-  if route_segments.len() <= 2 {
-    return RouteInfo { resource: major_resource, bucket }
+  if path_segments.len() <= 2 {
+    return RouteInfo { 
+      resource: major_resource, 
+      route
+     }
   }
 
-  for (index, segment) in route_segments[2..].iter().enumerate() {
+  for (index, segment) in path_segments[2..].iter().enumerate() {
     let i = index + 2;
 
     // Split messages into special buckets if they
@@ -104,47 +110,50 @@ pub fn get_route_info(method: &Method, path: &str) -> RouteInfo {
     if is_snowflake(segment) {
       if major_resource == Resources::Guilds 
       && method == Method::DELETE
-      && route_segments[i - 1] == "messages"  {
+      && path_segments[i - 1] == "messages"  {
         let snowflake = u64::from_str_radix(segment, 10).unwrap();
         let message_age_ms = get_snowflake_age_ms(snowflake);
         
         if message_age_ms > 14 * 24 * 60 * 60 * 1000 {
-          bucket.push_str("/!14d");
+          route.push_str("/!14d");
           break;
         } else if message_age_ms < 10 {
-          bucket.push_str("/!10s");
+          route.push_str("/!10s");
           break;
         }
         
         continue;
       }
 
-      bucket.push_str("/!");
+      route.push_str("/!");
       continue;
     }
 
     // Split reactions into modify/query buckets
     if major_resource == Resources::Channels && *segment == "reactions" {
       if method == Method::PUT || method == Method::DELETE {
-        bucket.push_str("/reactions/!modify");
+        route.push_str("/reactions/!modify");
         break
       }
 
-      bucket.push_str("/reactions/!");
+      route.push_str("/reactions/!");
       break
     }
 
     // Strip webhook/interaction tokens
     if major_resource == Resources::Webhooks || major_resource == Resources::Interactions
       && segment.len() >= 64 {
-        bucket.push_str("/!");
+        route.push_str("/!");
         continue
     }
 
-    bucket.push_str(&format!("/{}", segment));
+    route.push_str(&format!("/{}", segment));
   }
 
-  RouteInfo { resource: major_resource, bucket }
+  RouteInfo {
+    resource: major_resource, 
+    route
+  }
 }
 
 fn is_snowflake(s: &str) -> bool {

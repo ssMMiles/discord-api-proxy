@@ -6,15 +6,16 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-hyper = { version = "0.14", features = ["client", "server", "http2", "runtime", "stream"] }
+hyper = { version = "0.14", features = ["client", "server", "http1", "http2", "runtime", "stream"] }
 hyper-tls = "0.5.0"
-
-twilight-http = "0.13.0"
 
 redis = { version = "0.21.6", features = ["tokio-comp", "connection-manager"] }
 deadpool-redis = "0.10.2"
 
 tokio = { version = "1", features = ["macros", "net", "time", "rt-multi-thread"] }
+
+serde = { version = "1.0.144", features = ["derive"] }
+serde_json = "1.0.85"
 
 rand = "0.8.5"
 thiserror = "1.0.34"

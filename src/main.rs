@@ -10,10 +10,11 @@ use crate::{proxy::{ProxyWrapper, NewBucketStrategy, DiscordProxyConfig, Metrics
 mod redis;
 
 mod routes;
-mod proxy;
 
-mod discord;
+mod proxy;
+mod ratelimits;
 mod buckets;
+mod discord;
 
 #[tokio::main]
 async fn main() {
