@@ -5,6 +5,7 @@ A transparent, Redis backed proxy for handling Discord's API ratelimits.
  - Look into better solutions for getting the start time on the global ratelimit bucket, as 
   we currently wait for a response to be safe - in exchange for 15-25% less actual throughput.
  - Use pub/sub when waiting for a bucket's info to be available instead of retrying every 300ms.
+ - Better handling of 429s; On hitting one temporarily (1s) abort all requests with a 503 (`x-sent-by-proxy` header still present)?
  - Logging
 
 ## Usage
@@ -21,9 +22,9 @@ docker run -d \
 
 Once up and running, just send your normal requests to `http://YOURPROXY/api/v*` instead of `https://discord.com/api/v*`.
 
-You'll get back all the same responses, except when you would have hit a ratelimit - then you'll get a 429 from the proxy with `x-sent-by-proxy` and `x-ratelimit-bucket` headers
+You'll get back all the same responses, except when you would have hit a ratelimit - then you'll get a 429 from the proxy with `x-sent-by-proxy` and `x-ratelimit-bucket` headers.
 
-If you hit a 429, you can just retry the request until it works. If that's happening a lot, just stop hitting them.
+If you get a 429 from the proxy, you can just retry until it works. If it's happening a lot, just stop hitting them lol.
 
 #### Environment Variables
 Name | Description
@@ -38,7 +39,7 @@ Name | Description
 
 Under extreme load, Redis calls to check ratelimits may start to slow down, causing the global ratelimit bucket expiry to drift. We try to mitigate this by monitoring the time taken for ratelimit checks and aborting the request when overloaded, but some can still slip through.
 
-In the event that the proxy does receive a 429 from Discord, it will immediately exit to prevent further damage. This is considered fatal and may leave Redis in a bad state.
+In the event that the proxy does receive a 429 from Discord, it will immediately exit to prevent further damage. This is considered fatal and may leave Redis in a bad state. (In the proxy's current state, give it its own database that you can easily flush if this does happen.)
 
 ## Credits
   - [Nirn Proxy](https://github.com/germanoeich/nirn-proxy) by [@germanoeich](https://github.com/germanoeich) - Used as a reference for bucket mappings
