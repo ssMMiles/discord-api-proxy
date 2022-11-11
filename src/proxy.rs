@@ -110,7 +110,7 @@ impl DiscordProxy {
       _ => {}
     }
 
-    // println!("[{}] {}ms - {} {}", bot_id, start.elapsed().as_millis(), method, path);
+    log::debug!("[{}] {}ms - {} {}", bot_id, start.elapsed().as_millis(), method, path);
 
     req.headers_mut().insert("Host", HeaderValue::from_static("discord.com"));
     req.headers_mut().insert("User-Agent", HeaderValue::from_static("RockSolidRobots Discord Proxy/1.0"));
@@ -128,7 +128,7 @@ impl DiscordProxy {
       match self.update_ratelimits(bot_id, result.headers(), route_bucket, bucket_lock, sent_request_at).await {
         Ok(_) => {},
         Err(e) => {
-          eprintln!("Error updating ratelimits after proxying request: {}", e);
+          log::error!("Error updating ratelimits after proxying request: {}", e);
         }
       }
     }
@@ -137,11 +137,11 @@ impl DiscordProxy {
     match status {
       StatusCode::OK => {}
       StatusCode::TOO_MANY_REQUESTS => {
-        eprintln!("Discord returned 429! Global: {:?}", result.headers().get("X-RateLimit-Global"));
+        log::error!("Discord returned 429! Global: {:?}", result.headers().get("X-RateLimit-Global"));
         exit(1);
       },
       _ => {
-        // eprintln!("Discord returned non 200 status code {}!", status.as_u16());
+        log::error!("Discord returned non 200 status code {}!", status.as_u16());
       }
     }
 
@@ -151,7 +151,7 @@ impl DiscordProxy {
       ).observe(start.elapsed().as_secs_f64());
     }
 
-    // println!("Proxied request in {}ms. Status Code: {}", start.elapsed().as_millis(), result.status());
+    log::debug!("Proxied request in {}ms. Status Code: {}", start.elapsed().as_millis(), result.status());
 
     Ok(result)
   }

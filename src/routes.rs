@@ -19,9 +19,9 @@ pub async fn route(req: Request<Body>, proxy: ProxyWrapper, registry: Registry) 
     
     // Gather the metrics.
     let mut buffer = vec![];
-    let encoder = TextEncoder::new();
     let metric_families = registry.gather();
-    encoder.encode(&metric_families, &mut buffer).unwrap();
+
+    TextEncoder::new().encode(&metric_families, &mut buffer).unwrap();
 
     Ok(Response::new(Body::from(String::from_utf8(buffer).unwrap())))
   } else {
@@ -35,7 +35,7 @@ async fn proxy_discord_request(req: Request<Body>, mut proxy: ProxyWrapper) -> R
     Err(err) => {
       match err {
         _ => {
-          eprintln!("Internal Server Error: {:?}", err);
+          log::error!("Internal Server Error: {:?}", err);
 
           return Ok(Response::builder().status(500).body("Internal Server Error".into()).unwrap());
         }

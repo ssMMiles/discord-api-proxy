@@ -17,19 +17,21 @@ mod discord;
 
 #[tokio::main]
 async fn main() {
+  env_logger::init();
+  
   // Graceful shutdown channel
   let (tx, mut rx) = watch::channel(false);
 
   tokio::task::spawn(async move {
     ctrlc::set_handler(
       move || match tx.send(false) {
-        Err(_) => eprintln!("Failed to send shutdown signal."),
+        Err(_) => log::error!("Failed to send shutdown signal."),
         _ => ()
       })
     .expect("Failed to set Ctrl-C handler.");
   });
 
-  println!("Starting API proxy.");
+  log::info!("Starting API proxy.");
 
   let redis_host = env::var("REDIS_HOST").unwrap_or("127.0.0.1".to_string());
   let redis_port = env::var("REDIS_PORT").unwrap_or("6379".to_string())
@@ -39,7 +41,7 @@ async fn main() {
     .parse::<usize>().expect("REDIS_POOL_SIZE must be a valid integer.");
 
   let storage = RedisClient::new(&redis_host, redis_port, redis_pool_size).await;
-  println!("Connected to Redis.");
+  log::info!("Connected to Redis.");
 
   let https = HttpsConnector::new();
   let https_client = Client::builder()
@@ -75,7 +77,7 @@ async fn main() {
   let addr: SocketAddr = format!("{}:{}", host, port).parse().expect("Failed to parse socket address.");
   let listener = TcpListener::bind(addr).await.expect("Failed to bind to socket.");
   
-  println!("Starting HTTP Server on http://{}", addr);
+  log::info!("Starting HTTP Server on http://{}", addr);
 
   let webserver = tokio::task::spawn(async move {
     loop {
@@ -99,13 +101,13 @@ async fn main() {
               res = &mut conn => {
                 if let Err(err) = res {
                   if err.is_incomplete_message() {
-                    // eprintln!("Incomplete message.");
+                    log::error!("Incomplete message.");
                   } else if err.is_closed() {
-                    // eprintln!("Sender channel closed.");
+                    log::error!("Sender channel closed.");
                   } else if err.is_canceled() {
-                    // eprintln!("Request canceled.");
+                    log::error!("Request canceled.");
                   } else if err.is_connect() {
-                    // eprintln!("Error serving connection: {:?}", err);
+                    log::error!("Error serving connection: {:?}", err);
                   }
                 }
               }
@@ -125,7 +127,7 @@ async fn main() {
 
   tokio::select! {
     _ = webserver => {
-      println!("Webserver exited.");
+      log::info!("Webserver exited.");
     }
   }
 }
