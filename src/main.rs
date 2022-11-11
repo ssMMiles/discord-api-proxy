@@ -18,7 +18,7 @@ mod discord;
 #[tokio::main]
 async fn main() {
   env_logger::init();
-  
+
   // Graceful shutdown channel
   let (tx, mut rx) = watch::channel(false);
 
@@ -36,11 +36,14 @@ async fn main() {
   let redis_host = env::var("REDIS_HOST").unwrap_or("127.0.0.1".to_string());
   let redis_port = env::var("REDIS_PORT").unwrap_or("6379".to_string())
     .parse::<u16>().expect("REDIS_PORT must be a valid port number.");
-  
+
+  let redis_user = env::var("REDIS_USER").unwrap_or("".to_string());
+  let redis_pass = env::var("REDIS_PASS").unwrap_or("".to_string());
+
   let redis_pool_size = env::var("REDIS_POOL_SIZE").unwrap_or("64".to_string())
     .parse::<usize>().expect("REDIS_POOL_SIZE must be a valid integer.");
 
-  let storage = RedisClient::new(&redis_host, redis_port, redis_pool_size).await;
+  let storage = RedisClient::new(redis_host, redis_port, redis_user, redis_pass, redis_pool_size).await;
   log::info!("Connected to Redis.");
 
   let https = HttpsConnector::new();

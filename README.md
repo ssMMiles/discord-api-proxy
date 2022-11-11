@@ -33,6 +33,8 @@ Name | Description
 `PORT` | The port to listen on. Defaults to `8080`.
 `REDIS_HOST` | The host of the Redis server. Defaults to `127.0.0.1`.
 `REDIS_PORT` | The port of the Redis server. Defaults to `6379`.
+`REDIS_USER` | The host of the Redis server. Defaults to an empty string, is only available on Redis 6+`.
+`REDIS_PASS` | The host of the Redis server. If unset, auth is disabled.
 `METRICS` | Whether to expose Prometheus metrics on `/metrics`. Defaults to `true`.
 
 #### Warnings

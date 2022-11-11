@@ -17,8 +17,12 @@ pub enum RedisErrorWrapper {
 }
 
 impl RedisClient {
-  pub async fn new(host: &str, port: u16, pool_size: usize) -> Self {
-    let addr = format!("redis://{}:{}", host, port);
+  pub async fn new(host: String, port: u16, user: String, pass: String, pool_size: usize) -> Self {
+    let addr = if pass == "" {
+      format!("redis://{}:{}", host, port)
+    } else {
+      format!("redis://{}:{}@{}:{}", user, pass, host, port)
+    };
 
     let cfg_builder = Config::builder(&Config::from_url(addr)).unwrap();
     let pool = cfg_builder
