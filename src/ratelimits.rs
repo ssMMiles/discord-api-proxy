@@ -36,7 +36,7 @@ impl DiscordProxy {
 
     let id = bot_id.to_string();
 
-    loop {
+    let status = loop {
       let ratelimit_check_started_at = Instant::now();
 
       let ratelimits = RedisClient::check_global_and_route_ratelimits()
@@ -48,26 +48,28 @@ impl DiscordProxy {
       let global_ratelimit = ratelimits[0];
       let route_ratelimit = ratelimits[1];
 
-      log::debug!("[{}] Ratelimit Status - Global: {:?} - [{}]: {:?}", bot_id, &global_ratelimit, &route_bucket, &route_ratelimit);
-
-      if ratelimit_check_is_overloaded(ratelimit_check_started_at) {
-        break Ok(RatelimitStatus::ProxyOverloaded);
+      if ratelimit_check_is_overloaded(route_bucket, ratelimit_check_started_at) {
+        break RatelimitStatus::ProxyOverloaded;
       }
 
       match self.is_global_ratelimited(&mut redis_conn, &id, token, global_ratelimit).await? {
         Some(status) => {
           if status != RatelimitStatus::Ok(None) {
-            break Ok(status);
+            break status
           }
         },
         None => continue
       }
 
       match self.is_route_ratelimited(&mut redis_conn, route_bucket, route_ratelimit).await? {
-        Some(status) => break Ok(status),
+        Some(status) => break status,
         None => continue
       }
-    }
+    };
+
+    log::debug!("[{}] RL Status: {:?}", route_bucket, status);
+
+    Ok(status)
   }
 
   async fn check_route_ratelimit(&mut self, route_bucket: &str) -> Result<RatelimitStatus, RedisErrorWrapper> {
@@ -80,7 +82,7 @@ impl DiscordProxy {
         .key(route_bucket)
       .invoke_async::<_,Option<u16>>(&mut redis_conn).await?;
 
-      if ratelimit_check_is_overloaded(ratelimit_check_started_at) {
+      if ratelimit_check_is_overloaded(route_bucket, ratelimit_check_started_at) {
         break Ok(RatelimitStatus::ProxyOverloaded);
       }
 
@@ -244,16 +246,16 @@ impl DiscordProxy {
   }
 }
 
-fn ratelimit_check_is_overloaded(started_at: Instant) -> bool {
+fn ratelimit_check_is_overloaded(route_bucket: &str, started_at: Instant) -> bool {
   let time_taken = started_at.elapsed().as_millis();
 
   if time_taken > 50 {
-    log::error!("Redis took over {}ms to respond. Request aborted.", time_taken);
+    log::error!("[{}] Redis took over {}ms to respond. Request aborted.", route_bucket, time_taken);
     return true;
   } else if time_taken > 25 {
-    log::warn!("Redis took over {}ms to respond. The proxy is getting overloaded.", time_taken);
+    log::warn!("[{}] Redis took over {}ms to respond. The proxy is getting overloaded.", route_bucket, time_taken);
   } else {
-    log::debug!("Redis took {}ms to respond.", time_taken);
+    log::debug!("[{}] Redis took {}ms to respond.", route_bucket, time_taken);
   }
 
   false

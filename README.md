@@ -6,7 +6,6 @@ A transparent, Redis backed proxy for handling Discord's API ratelimits.
   we currently wait for a response to be safe - in exchange for 15-25% less actual throughput.
  - Use pub/sub when waiting for a bucket's info to be available instead of retrying every 300ms.
  - Better handling of 429s; On hitting one temporarily (1s) abort all requests with a 503 (`x-sent-by-proxy` header still present)?
- - Logging
 
 ## Usage
 
