@@ -5,7 +5,6 @@ A transparent, Redis backed proxy for handling Discord's API ratelimits.
  - Look into better solutions for getting the start time on the global ratelimit bucket, as 
   we currently wait for a response to be safe - in exchange for 15-25% less actual throughput.
  - Use pub/sub when waiting for a bucket's info to be available instead of retrying every 300ms.
- - Better handling of 429s; On hitting one temporarily (1s) abort all requests with a 503 (`x-sent-by-proxy` header still present)?
 
 ## Usage
 
@@ -40,7 +39,9 @@ Name | Description
 
 Under extreme load, Redis calls to check ratelimits may start to slow down, causing the global ratelimit bucket expiry to drift. We try to mitigate this by monitoring the time taken for ratelimit checks and aborting the request when overloaded, but some can still slip through.
 
-In the event that the proxy does receive a 429 from Discord, it will immediately exit to prevent further damage. This is considered fatal and may leave Redis in a bad state. (In the proxy's current state, give it its own database that you can easily flush if this does happen.)
+In the event that the proxy does receive a 429 from Discord, it will abort all further requests for 1 second. 
+
+*Not sure if this still applies - Incase Redis ends up in a bad state, I recommend giving the proxy its own instance that you can easily flush if you see weird behaviour after a restart.*
 
 ## Credits
   - [Nirn Proxy](https://github.com/germanoeich/nirn-proxy) by [@germanoeich](https://github.com/germanoeich) - Used as a reference for bucket mappings

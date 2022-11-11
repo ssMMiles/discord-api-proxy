@@ -1,4 +1,4 @@
-use std::{ops::{DerefMut, Deref}, time::{Duration, SystemTime, UNIX_EPOCH}, str::FromStr, process::exit};
+use std::{ops::{DerefMut, Deref}, time::{Duration, SystemTime, UNIX_EPOCH}, str::FromStr, sync::{atomic::{AtomicBool, Ordering}, Arc}};
 use base64::decode;
 use hyper::{Request, Client, client::HttpConnector, Body, Response, StatusCode, http::{HeaderValue, uri::PathAndQuery}, HeaderMap, Uri};
 use hyper_tls::HttpsConnector;
@@ -18,6 +18,7 @@ impl ProxyWrapper {
     Self { 
       proxy: DiscordProxy { 
         config: config.clone(), 
+        disabled: Arc::new(AtomicBool::new(false)),
         metrics: metrics.clone(), 
         redis: redis.clone(), 
         client: client.clone() 
@@ -52,13 +53,14 @@ pub struct DiscordProxyConfig {
   pub buckets: NewBucketStrategy,
 
   pub lock_timeout: Duration,
+  pub ratelimit_timeout: Duration,
 
   pub enable_metrics: bool,
 }
 
 impl DiscordProxyConfig {
-  pub fn new(global: NewBucketStrategy, buckets: NewBucketStrategy, lock_timeout: Duration, enable_metrics: bool) -> Self {
-    Self { global, buckets, lock_timeout, enable_metrics }
+  pub fn new(global: NewBucketStrategy, buckets: NewBucketStrategy, lock_timeout: Duration, ratelimit_timeout: Duration, enable_metrics: bool) -> Self {
+    Self { global, buckets, lock_timeout, ratelimit_timeout, enable_metrics }
   }
 }
 
@@ -71,6 +73,8 @@ pub struct Metrics {
 pub struct DiscordProxy {
   pub redis: RedisClient,
   pub client: Client<HttpsConnector<HttpConnector>>,
+
+  disabled: Arc<AtomicBool>,
 
   metrics: Metrics,
 
@@ -121,6 +125,10 @@ impl DiscordProxy {
     };
     *req.uri_mut() = Uri::from_str(&format!("https://discord.com{}", path_and_query)).unwrap();
 
+    if self.disabled.load(Ordering::Acquire) {
+      return Ok(Response::builder().status(503).body("Temporarily Overloaded".into()).unwrap());
+    }
+
     let result = self.client.request(req).await.map_err(|e| ProxyError::RequestError(e))?;
     let sent_request_at = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis();
 
@@ -137,8 +145,10 @@ impl DiscordProxy {
     match status {
       StatusCode::OK => {}
       StatusCode::TOO_MANY_REQUESTS => {
-        log::error!("Discord returned 429! Global: {:?}", result.headers().get("X-RateLimit-Global"));
-        exit(1);
+        log::error!("ABORTING REQUESTS FOR {}ms! - Discord returned 429! Global: {:?}", self.config.ratelimit_timeout.as_millis(), result.headers().get("X-RateLimit-Global"));
+        self.disabled.store(true, Ordering::Release);
+        tokio::time::sleep(self.config.ratelimit_timeout).await;
+        self.disabled.store(false, Ordering::Release);
       },
       _ => {
         log::error!("Discord returned non 200 status code {}!", status.as_u16());

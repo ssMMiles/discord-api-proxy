@@ -71,6 +71,7 @@ async fn main() {
     NewBucketStrategy::Strict,
     NewBucketStrategy::Strict,
     Duration::from_millis(300),
+    Duration::from_millis(1000),
     enable_metrics
   ), &metrics, &storage, &https_client);
 
