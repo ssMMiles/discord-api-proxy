@@ -1,9 +1,9 @@
 use deadpool_redis::Connection;
 use hyper::HeaderMap;
 use rand::{thread_rng, distributions::Alphanumeric, Rng};
-use tokio::{time::{Instant, sleep}, select};
+use tokio::{time::Instant, select};
 
-use crate::{proxy::{DiscordProxy, NewBucketStrategy, ProxyError}, buckets::{Resources, RouteInfo}, redis::{RedisClient, RedisErrorWrapper}};
+use crate::{proxy::{DiscordProxy, ProxyError}, buckets::{Resources, RouteInfo}, redis::{RedisClient, RedisErrorWrapper}, NewBucketStrategy};
 
 #[derive(PartialEq, Debug)]
 pub enum RatelimitStatus {
@@ -21,7 +21,7 @@ impl DiscordProxy {
       _ => true
     };
     
-    log::debug!("[{}] Using Global Ratelimit : {}", route_bucket, use_global_rl);
+    // log::debug!("[{}] Using Global Ratelimit : {}", route_bucket, use_global_rl);
 
     if use_global_rl {
       Ok(self.check_global_and_bucket_ratelimits(&bot_id, &token, route_bucket).await?)
@@ -67,7 +67,7 @@ impl DiscordProxy {
       }
     };
 
-    log::debug!("[{}] RL Status: {:?}", route_bucket, status);
+    log::debug!("[{}] Ratelimit Status: {:?}", route_bucket, status);
 
     Ok(status)
   }
@@ -133,13 +133,26 @@ impl DiscordProxy {
           return Ok(None);
         } else {
           if self.config.global == NewBucketStrategy::Strict {
-            log::debug!("Lock is taken and ratelimit config is Strict, retrying in {}ms.", self.config.lock_timeout.as_millis());
+            log::debug!("[{}]  Lock is taken and ratelimit config is Strict, awaiting unlock.", &id);
             
-            sleep(self.config.lock_timeout).await;
+            select! {
+              Ok(_) = self.redis.await_lock(id) => {
+                log::debug!("[{}] Unlock received, continuing.", &id);
+
+                return Ok(None);
+              },
+              _ = tokio::time::sleep(self.config.lock_timeout) => {
+                log::debug!("[{}] Lock wait expired, retrying.", &id);
+              }
+            };
+
+            log::debug!("[{}] Failed to obtain unlock from PubSub, cleaning up.", &id);
+            self.redis.cleanup_pending_locks(id).await;
+
             return Ok(None);
           }
 
-          log::debug!("Lock is taken and ratelimit config is Loose, skipping ratelimit check.");
+          log::debug!("[{}] Lock is taken and ratelimit config is Loose, skipping ratelimit check.", &id);
         }
       }
     };
@@ -171,31 +184,30 @@ impl DiscordProxy {
           return Ok(Some(RatelimitStatus::Ok(Some(lock_value))))
         } else {
           if self.config.buckets == NewBucketStrategy::Strict {
-            log::debug!("Lock is taken and ratelimit config is Strict, retrying in {}ms.", self.config.lock_timeout.as_millis());
+            log::debug!("[{}]  Lock is taken, awaiting unlock.", &route_bucket);
             
             select! {
-              _ = sleep(self.config.lock_timeout) => {
-                log::warn!("Waiting for lock timed out. Retrying...")
+              Ok(_) = self.redis.await_lock(route_bucket) => {
+                log::debug!("[{}] Unlock received, continuing.", &route_bucket);
               },
-              // _ = self.wait_for_lock(route_bucket) => {
-                
-              // }
-            }
+              _ = tokio::time::sleep(self.config.lock_timeout) => {
+                log::debug!("[{}] Lock wait expired, retrying.", &route_bucket);
+              }
+            };
+
+            log::debug!("[{}] Failed to obtain unlock from PubSub, cleaning up.", &route_bucket);
+            self.redis.cleanup_pending_locks(route_bucket).await;
 
             return Ok(None);
           }
 
-          log::debug!("Lock is taken and ratelimit config is Loose, skipping ratelimit check.");
+          log::debug!("[{}]  Lock is taken, skipping ratelimit check.", &route_bucket);
         }
       }
     };
 
     Ok(Some(RatelimitStatus::Ok(None)))
   }
-
-  // pub async fn wait_for_lock(&self, bucket: &str) -> () {
-
-  // }
 
   pub async fn update_ratelimits(&mut self, bot_id: u64, headers: &HeaderMap, bucket: String, bucket_lock: Option<String>, sent_request_at: u128) -> Result<(), RedisErrorWrapper> {
     let bucket_limit = match headers.get("X-RateLimit-Limit") {
@@ -216,10 +228,10 @@ impl DiscordProxy {
     let redis = self.redis.clone();
     let mut redis_conn = redis.pool.get().await?;
 
-    if bucket_lock.is_some() {
-      tokio::task::spawn(async move {
+    tokio::task::spawn(async move {
+      if bucket_lock.is_some() {
         log::debug!("[{}] New bucket! Setting ratelimit to {}, resetting at {}", bucket, bucket_limit, reset_at);
-  
+
         RedisClient::expire_global_and_unlock_route_buckets()
           .key(&bot_id)
             .arg(&(sent_request_at as u64 + 1000))
@@ -229,18 +241,18 @@ impl DiscordProxy {
             .arg(&reset_at)
         .invoke_async::<_, bool>(&mut redis_conn).await
         .expect("Failed to unlock route bucket and update expiry times.");
-      });
-    } else {
-      tokio::task::spawn(async move {
-        RedisClient::expire_global_and_route_buckets()
-          .key(&bot_id)
-            .arg(&(sent_request_at as u64 + 1000))
-          .key(bucket)
-            .arg(&reset_at)
-        .invoke_async::<_, bool>(&mut redis_conn).await
-        .expect("Failed to update bucket expiry times.");
-      });
-    }
+      } else {
+        tokio::task::spawn(async move {
+          RedisClient::expire_global_and_route_buckets()
+            .key(&bot_id)
+              .arg(&(sent_request_at as u64 + 1000))
+            .key(bucket)
+              .arg(&reset_at)
+          .invoke_async::<_, bool>(&mut redis_conn).await
+          .expect("Failed to update bucket expiry times.");
+        });
+      }
+    });
 
     Ok(())
   }
@@ -250,10 +262,10 @@ fn ratelimit_check_is_overloaded(route_bucket: &str, started_at: Instant) -> boo
   let time_taken = started_at.elapsed().as_millis();
 
   if time_taken > 50 {
-    log::error!("[{}] Redis took over {}ms to respond. Request aborted.", route_bucket, time_taken);
+    log::error!("[{}] Ratelimit checks took {}ms to respond. Redis or the proxy is overloaded, request aborted.", route_bucket, time_taken);
     return true;
   } else if time_taken > 25 {
-    log::warn!("[{}] Redis took over {}ms to respond. The proxy is getting overloaded.", route_bucket, time_taken);
+    log::warn!("[{}] Ratelimit checks took {}ms to respond. Redis or the proxy is getting overloaded.", route_bucket, time_taken);
   } else {
     log::debug!("[{}] Redis took {}ms to respond.", route_bucket, time_taken);
   }

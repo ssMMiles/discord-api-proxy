@@ -8,7 +8,9 @@ if global_lock == lock_val then
   local global_limit = ARGV[2]
 
   redis.call('SET', global_key, global_limit)
+
   redis.call('DEL', global_lock_key)
+  redis.call('PUBLISH', 'unlock', global_key)
 
   return true
 end

@@ -21,6 +21,8 @@ if route_lock == lock_val then
   end
 
   redis.call('DEL', route_lock_key)
+  redis.call('PUBLISH', 'unlock', route_key)
+
   return true
 end
 

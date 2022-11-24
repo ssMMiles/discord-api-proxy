@@ -24,7 +24,6 @@ impl Resources {
   }
 }
 
-// implement to string
 impl ToString for Resources {
   fn to_string(&self) -> String {
     match self {

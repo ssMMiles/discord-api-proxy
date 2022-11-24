@@ -1,10 +1,10 @@
-use std::{net::SocketAddr, env, time::Duration};
+use std::{net::SocketAddr, env, time::Duration, process::exit, str::FromStr};
 use hyper::{Client, service::{service_fn}, server::conn::Http};
 use hyper_tls::HttpsConnector;
 use prometheus::Registry;
 use tokio::{net::TcpListener, sync::watch};
 
-use crate::{proxy::{ProxyWrapper, NewBucketStrategy, DiscordProxyConfig, Metrics}, routes::route, redis::RedisClient};
+use crate::{proxy::{ProxyWrapper, DiscordProxyConfig, Metrics}, routes::route, redis::RedisClient};
 
 mod redis;
 
@@ -14,6 +14,24 @@ mod proxy;
 mod ratelimits;
 mod buckets;
 mod discord;
+
+#[derive(Clone, PartialEq)]
+pub enum NewBucketStrategy {
+  Strict,
+  Loose
+}
+
+impl FromStr for NewBucketStrategy {
+  type Err = ();
+
+  fn from_str(input: &str) -> Result<NewBucketStrategy, Self::Err> {
+    match input.to_lowercase().as_str() {
+        "strict"  => Ok(NewBucketStrategy::Strict),
+        "loose"  => Ok(NewBucketStrategy::Loose),
+        _      => Err(()),
+    }
+  }
+}
 
 #[tokio::main]
 async fn main() {
@@ -40,8 +58,18 @@ async fn main() {
   let redis_user = env::var("REDIS_USER").unwrap_or("".to_string());
   let redis_pass = env::var("REDIS_PASS").unwrap_or("".to_string());
 
-  let redis_pool_size = env::var("REDIS_POOL_SIZE").unwrap_or("64".to_string())
+  let redis_pool_size = env::var("REDIS_POOL_SIZE").unwrap_or("48".to_string())
     .parse::<usize>().expect("REDIS_POOL_SIZE must be a valid integer.");
+
+  let lock_wait_timeout = env::var("LOCK_WAIT_TIMEOUT").unwrap_or("500".to_string())
+    .parse::<u64>().expect("LOCK_WAIT_TIMEOUT must be a valid integer. (ms)");
+  let ratelimit_timeout = env::var("RATELIMIT_ABORT_PERIOD").unwrap_or("1000".to_string())
+    .parse::<u64>().expect("RATELIMIT_ABORT_PERIOD must be a valid integer. (ms)");
+
+  let global_ratelimit_strategy = env::var("GLOBAL_RATELIMIT_STRATEGY").unwrap_or("strict".to_string())
+    .parse::<NewBucketStrategy>().expect("GLOBAL_RATELIMIT_STRATEGY must be either 'Strict' or 'Loose'.");
+  let bucket_ratelimit_strategy = env::var("BUCKET_RATELIMIT_STRATEGY").unwrap_or("strict".to_string())
+    .parse::<NewBucketStrategy>().expect("BUCKET_RATELIMIT_STRATEGY must be either 'Strict' or 'Loose'.");
 
   let storage = RedisClient::new(redis_host, redis_port, redis_user, redis_pass, redis_pool_size).await;
   log::info!("Connected to Redis.");
@@ -64,14 +92,14 @@ async fn main() {
     requests: request_histogram.clone()
   };
 
-  let enable_metrics: bool = env::var("METRICS").unwrap_or("true".to_string())
+  let enable_metrics: bool = env::var("ENABLE_METRICS").unwrap_or("true".to_string())
     .parse().expect("METRICS must be a boolean value.");
 
   let proxy = ProxyWrapper::new(DiscordProxyConfig::new(
-    NewBucketStrategy::Strict,
-    NewBucketStrategy::Strict,
-    Duration::from_millis(300),
-    Duration::from_millis(1000),
+    global_ratelimit_strategy,
+    bucket_ratelimit_strategy,
+    Duration::from_millis(lock_wait_timeout),
+    Duration::from_millis(ratelimit_timeout),
     enable_metrics
   ), &metrics, &storage, &https_client);
 
@@ -134,4 +162,6 @@ async fn main() {
       log::info!("Webserver exited.");
     }
   }
+
+  exit(0);
 }

@@ -6,7 +6,7 @@ use prometheus::HistogramVec;
 use thiserror::Error;
 use tokio::time::Instant;
 
-use crate::{redis::{RedisClient, RedisErrorWrapper}, buckets::{Resources, get_route_info, RouteInfo, get_route_bucket}, ratelimits::RatelimitStatus, discord::DiscordError};
+use crate::{redis::{RedisClient, RedisErrorWrapper}, buckets::{Resources, get_route_info, RouteInfo, get_route_bucket}, ratelimits::RatelimitStatus, discord::DiscordError, NewBucketStrategy};
 
 #[derive(Clone)]
 pub struct ProxyWrapper {
@@ -39,12 +39,6 @@ impl DerefMut for ProxyWrapper {
   fn deref_mut(&mut self) -> &mut Self::Target {
     &mut self.proxy
   }
-}
-
-#[derive(Clone, PartialEq)]
-pub enum NewBucketStrategy {
-  Strict,
-  // Loose
 }
 
 #[derive(Clone)]
@@ -114,10 +108,8 @@ impl DiscordProxy {
       _ => {}
     }
 
-    log::debug!("[{}] {}ms - {} {}", bot_id, start.elapsed().as_millis(), method, path);
-
     req.headers_mut().insert("Host", HeaderValue::from_static("discord.com"));
-    req.headers_mut().insert("User-Agent", HeaderValue::from_static("RockSolidRobots Discord Proxy/1.0"));
+    req.headers_mut().insert("User-Agent", HeaderValue::from_static("limbo-labs/discord-api-proxy/1.0"));
     
     let path_and_query = match req.uri().path_and_query() {
       Some(path_and_query) => path_and_query.clone(),
@@ -133,7 +125,7 @@ impl DiscordProxy {
     let sent_request_at = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis();
 
     if let RatelimitStatus::Ok(bucket_lock) = ratelimit_status {
-      match self.update_ratelimits(bot_id, result.headers(), route_bucket, bucket_lock, sent_request_at).await {
+      match self.update_ratelimits(bot_id, result.headers(), route_bucket.clone(), bucket_lock, sent_request_at).await {
         Ok(_) => {},
         Err(e) => {
           log::error!("Error updating ratelimits after proxying request: {}", e);
@@ -161,7 +153,7 @@ impl DiscordProxy {
       ).observe(start.elapsed().as_secs_f64());
     }
 
-    log::debug!("Proxied request in {}ms. Status Code: {}", start.elapsed().as_millis(), result.status());
+    log::debug!("[{}] Proxied request in {}ms. Status Code: {}", &route_bucket, start.elapsed().as_millis(), result.status());
 
     Ok(result)
   }
@@ -184,8 +176,7 @@ fn parse_headers(headers: &HeaderMap, route_info: &RouteInfo) -> Result<(String,
     return Ok((token, id))
   }
 
-  // TODO
-  // if a token retrieval function is not configured, use the auth header
+  // Use auth header by default
   let token = match headers.get("Authorization") {
     Some(header) => {
       let token = match header.to_str() {
@@ -202,7 +193,6 @@ fn parse_headers(headers: &HeaderMap, route_info: &RouteInfo) -> Result<(String,
     None => return Err("Missing Authorization header".to_string())
   };
 
-  // this is horrible
   let base64_bot_id = match token[4..].split('.').nth(0) {
     Some(base64_bot_id) => base64_bot_id,
     None => return Err("Invalid Authorization header".to_string())

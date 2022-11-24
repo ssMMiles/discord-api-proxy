@@ -1,11 +1,6 @@
 # Discord API Proxy
 A transparent, Redis backed proxy for handling Discord's API ratelimits.
 
-## Todo
- - Look into better solutions for getting the start time on the global ratelimit bucket, as 
-  we currently wait for a response to be safe - in exchange for 15-25% less actual throughput.
- - Use pub/sub when waiting for a bucket's info to be available instead of retrying every 300ms.
-
 ## Usage
 
 The easiest way to run the proxy for yourself is Docker, images are available [here](https://hub.docker.com/r/ssmmiles/discord-api-proxy).
@@ -22,7 +17,7 @@ Once up and running, just send your normal requests to `http://YOURPROXY/api/v*`
 
 You'll get back all the same responses, except when you would have hit a ratelimit - then you'll get a 429 from the proxy with `x-sent-by-proxy` and `x-ratelimit-bucket` headers.
 
-If you get a 429 from the proxy, you can just retry until it works. If it's happening a lot, just stop hitting them lol.
+If you get a 429 from the proxy, you should just retry until it works. If it's happening a lot, just stop hitting them.
 
 #### Environment Variables
 Name | Description
@@ -33,15 +28,23 @@ Name | Description
 `REDIS_PORT` | The port of the Redis server. Defaults to `6379`.
 `REDIS_USER` | The host of the Redis server. Defaults to an empty string, is only available on Redis 6+`.
 `REDIS_PASS` | The host of the Redis server. If unset, auth is disabled.
-`METRICS` | Whether to expose Prometheus metrics on `/metrics`. Defaults to `true`.
+`REDIS_POOL_SIZE` | The size of the Redis connection pool. Defaults to `64`. Note: At least one connection is always reserved for PubSub.
+`ENABLE_METRICS` | Whether to expose Prometheus metrics on `/metrics`. Defaults to `true`.
+`LOCK_WAIT_TIMEOUT` | Duration (in ms) a request should wait for a lock to be released before retrying. Defaults to `500`.
+`RATELIMIT_ABORT_PERIOD` | If the proxy does ever hit a 429, the duration (in ms) it should abort all incoming requests with a 503 for. Defaults to `1000`.
 
 #### Warnings
 
+### Reduced Throughput
+When sending globally ratelimited requests, the proxy currently starts the 1s bucket time from when the first response is received as Discord never provide the exact time. This can cause the proxy to be slightly over-restrictive, with a bot where the global ratelimit is 50 only being allowed up to ~47 requests per second.
+
+### Overloading
 Under extreme load, Redis calls to check ratelimits may start to slow down, causing the global ratelimit bucket expiry to drift. We try to mitigate this by monitoring the time taken for ratelimit checks and aborting the request when overloaded, but some can still slip through.
 
-In the event that the proxy does receive a 429 from Discord, it will abort all further requests for 1 second. 
+In the event that the proxy does receive a 429 from Discord, it will abort all further requests for 1 second.
 
-*Not sure if this still applies - Incase Redis ends up in a bad state, I recommend giving the proxy its own instance that you can easily flush if you see weird behaviour after a restart.*
+### Dirty Cache
+Due to ratelimit expiry being set seperately to the ratelimit info, it's possible for a request to be sent to Discord, but the proxy/Redis/network to drop out before the expiry is set. Be prepared to flush Redis if this happens, or you see issues with requests hanging.
 
 ## Credits
   - [Nirn Proxy](https://github.com/germanoeich/nirn-proxy) by [@germanoeich](https://github.com/germanoeich) - Used as a reference for bucket mappings
