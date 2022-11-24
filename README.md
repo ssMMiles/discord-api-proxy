@@ -33,7 +33,7 @@ Name | Description
 `LOCK_WAIT_TIMEOUT` | Duration (in ms) a request should wait for a lock to be released before retrying. Defaults to `500`.
 `RATELIMIT_ABORT_PERIOD` | If the proxy does ever hit a 429, the duration (in ms) it should abort all incoming requests with a 503 for. Defaults to `1000`.
 
-#### Warnings
+## Warnings
 
 ### Reduced Throughput
 When sending globally ratelimited requests, the proxy currently starts the 1s bucket time from when the first response is received as Discord never provide the exact time. This can cause the proxy to be slightly over-restrictive, with a bot where the global ratelimit is 50 only being allowed up to ~47 requests per second.
