@@ -43,9 +43,6 @@ Under extreme load, Redis calls to check ratelimits may start to slow down, caus
 
 In the event that the proxy does receive a 429 from Discord, it will abort all further requests for 1 second.
 
-### Dirty Cache
-Due to ratelimit expiry being set seperately to the ratelimit info, it's possible for a request to be sent to Discord, but the proxy/Redis/network to drop out before the expiry is set. Be prepared to flush Redis if this happens, or you see issues with requests hanging.
-
 ## Credits
   - [Nirn Proxy](https://github.com/germanoeich/nirn-proxy) by [@germanoeich](https://github.com/germanoeich) - Used as a reference for bucket mappings
   

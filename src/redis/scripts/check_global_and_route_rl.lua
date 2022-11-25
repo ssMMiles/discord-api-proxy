@@ -13,6 +13,10 @@ if global_count >= global_limit then
   return {0, false}
 end
 
+if global_count == 1 then
+  redis.call('EXPIRE', global_count_key, 3)
+end
+
 local route_key = KEYS[2]
 local route_count_key = route_key .. ':count'
 
@@ -27,6 +31,10 @@ if route_limit == 0 then
 end
 
 local route_count = tonumber(redis.call('INCR', route_count_key))
+
+if route_count == 1 then
+  redis.call('EXPIRE', route_count_key, 60)
+end
 
 if route_count >= route_limit then
   if tonumber(redis.call('DECR', global_count_key)) == 0 then

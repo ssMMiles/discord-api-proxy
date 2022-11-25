@@ -13,6 +13,10 @@ end
 
 local bucket_count = tonumber(redis.call('INCR', bucket_count_key))
 
+if bucket_count == 1 then
+  redis.call('EXPIRE', bucket_count_key, 60)
+end
+
 if bucket_count >= bucket_limit then
   return 0
 end
