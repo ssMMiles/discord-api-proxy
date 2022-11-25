@@ -10,7 +10,7 @@ docker run -d \
   -p 8080:8080 \
   -e HOST=0.0.0.0 \
   -e REDIS_HOST=redis \
-  ssmmiles/discord-api-proxy
+  limbolabs/discord-api-proxy
 ```
 
 Once up and running, just send your normal requests to `http://YOURPROXY/api/v*` instead of `https://discord.com/api/v*`.
