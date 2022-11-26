@@ -149,7 +149,7 @@ impl DiscordProxy {
 
     if self.config.enable_metrics {
       self.metrics.requests.with_label_values(
-        &[&bot_id.to_string(), &method.to_string(), status.as_str(), &path]
+        &[&bot_id.to_string(), &method.to_string(), &path, status.as_str()]
       ).observe(start.elapsed().as_secs_f64());
     }
 
