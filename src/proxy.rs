@@ -137,13 +137,20 @@ impl DiscordProxy {
     match status {
       StatusCode::OK => {}
       StatusCode::TOO_MANY_REQUESTS => {
-        log::error!("ABORTING REQUESTS FOR {}ms! - Discord returned 429! Global: {:?}", self.config.ratelimit_timeout.as_millis(), result.headers().get("X-RateLimit-Global"));
-        self.disabled.store(true, Ordering::Release);
-        tokio::time::sleep(self.config.ratelimit_timeout).await;
-        self.disabled.store(false, Ordering::Release);
+        let is_shared_ratelimit = result.headers().get("X-RateLimit-Scope").map(|v| v == "shared").unwrap_or(false);
+        
+        if is_shared_ratelimit {
+          log::info!("Discord returned Shared 429!");
+        } else {
+          log::error!("Discord returned 429! Global: {:?} Scope: {:?} - ABORTING REQUESTS FOR {}ms!", result.headers().get("X-RateLimit-Global"), result.headers().get("X-RateLimit-Scope"), self.config.ratelimit_timeout.as_millis());
+        
+          self.disabled.store(true, Ordering::Release);
+          tokio::time::sleep(self.config.ratelimit_timeout).await;
+          self.disabled.store(false, Ordering::Release);
+        }
       },
       _ => {
-        log::error!("Discord returned non 200 status code {}!", status.as_u16());
+        log::warn!("Discord returned non 200 status code {}!", status.as_u16());
       }
     }
 
