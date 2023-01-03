@@ -16,12 +16,12 @@ pub enum RatelimitStatus {
 impl DiscordProxy {
   pub async fn check_ratelimits(&mut self, bot_id: &u64, token: &str, route: &RouteInfo, route_bucket: &str) -> Result<RatelimitStatus, ProxyError> {  
     let use_global_rl = match route.resource {
-      Resources::Interactions => false,
       Resources::Webhooks => false,
+      Resources::Interactions => route.route != "interactions/!/!/callback",
       _ => true
     };
     
-    // log::debug!("[{}] Using Global Ratelimit : {}", route_bucket, use_global_rl);
+    log::debug!("[{}] Using Global Ratelimit : {}", route_bucket, use_global_rl);
 
     if use_global_rl {
       Ok(self.check_global_and_bucket_ratelimits(&bot_id, &token, route_bucket).await?)
