@@ -95,10 +95,10 @@ pub fn get_route_info(method: &Method, path: &str) -> RouteInfo {
   route.push_str(&major_bucket);
 
   if path_segments.len() <= 2 {
-    return RouteInfo { 
+    return RouteInfo {
       resource: major_resource, 
       route
-     }
+    }
   }
 
   for (index, segment) in path_segments[2..].iter().enumerate() {
@@ -124,7 +124,7 @@ pub fn get_route_info(method: &Method, path: &str) -> RouteInfo {
         continue;
       }
 
-      route.push_str("/!");
+      route.push_str("/!*");
       continue;
     }
 

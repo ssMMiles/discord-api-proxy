@@ -17,7 +17,7 @@ impl DiscordProxy {
   pub async fn check_ratelimits(&mut self, bot_id: &u64, token: &str, route: &RouteInfo, route_bucket: &str) -> Result<RatelimitStatus, ProxyError> {  
     let use_global_rl = match route.resource {
       Resources::Webhooks => false,
-      Resources::Interactions => route.route != "interactions/!/!/callback",
+      Resources::Interactions => route.route != "interactions/!*/!/callback",
       _ => true
     };
     
