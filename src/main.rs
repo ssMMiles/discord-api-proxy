@@ -95,10 +95,13 @@ async fn main() {
   let enable_metrics: bool = env::var("ENABLE_METRICS").unwrap_or("true".to_string())
     .parse().expect("METRICS must be a boolean value.");
 
+  let global_time_slice_offset_ms: u64 = env::var("GLOBAL_TIME_SLICE_OFFSET").unwrap_or("200".to_string())
+    .parse().expect("GLOBAL_TIME_SLICE_OFFSET must be a valid integer. (ms)");
+
   let proxy_config = DiscordProxyConfig::new(
     global_ratelimit_strategy,
     bucket_ratelimit_strategy,
-    200,
+    global_time_slice_offset_ms,
     Duration::from_millis(lock_wait_timeout),
     Duration::from_millis(ratelimit_timeout),
     enable_metrics
