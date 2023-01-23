@@ -11,6 +11,8 @@ use crate::{redis::{RedisClient, RedisErrorWrapper}, buckets::{Resources, get_ro
 
 #[derive(Clone)]
 pub struct DiscordProxyConfig {
+  pub clustered_redis: bool,
+
   pub global: NewBucketStrategy,
   pub buckets: NewBucketStrategy,
 
@@ -23,10 +25,12 @@ pub struct DiscordProxyConfig {
 }
 
 impl DiscordProxyConfig {
-  pub fn new(global: NewBucketStrategy, buckets: NewBucketStrategy, global_time_slice_offset_ms: u64, lock_timeout: Duration, ratelimit_timeout: Duration, enable_metrics: bool) -> Self {
-    Self { 
-      global, 
-      buckets, 
+  pub fn new(global: NewBucketStrategy, buckets: NewBucketStrategy, global_time_slice_offset_ms: u64, lock_timeout: Duration, ratelimit_timeout: Duration, enable_metrics: bool, clustered_redis: bool) -> Self {
+    Self {
+      clustered_redis,
+
+      global,
+      buckets,
 
       global_time_slice_offset_ms,
 
@@ -97,7 +101,9 @@ impl DiscordProxy {
         return Ok(generate_ratelimit_response(&route_info.route));
       },
       RatelimitStatus::ProxyOverloaded => {
-        return Ok(Response::builder().status(503).body("Proxy Overloaded".into()).unwrap());
+        return Ok(Response::builder().status(503)
+          .header("x-sent-by-proxy", "true")
+          .body("Proxy Overloaded".into()).unwrap());
       },
       _ => {}
     }
