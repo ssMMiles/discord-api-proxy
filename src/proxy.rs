@@ -177,7 +177,7 @@ fn parse_headers(headers: &HeaderMap, route_info: &RouteInfo) -> Result<Option<(
       token.to_string()
     },
     None => {
-      if route_info.resource == Resources::Webhooks && route_info.route.starts_with("webhooks/!*/!")
+      if route_info.resource == Resources::Webhooks && route_info.route.split("/").count() != 2
        || route_info.resource == Resources::OAuth2
        || route_info.resource == Resources::Interactions { 
         return Ok(None)
