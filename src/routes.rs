@@ -1,14 +1,25 @@
-use std::convert::Infallible;
+use std::{convert::Infallible, sync::Arc};
 use hyper::{Body, Request, Response, StatusCode};
 use prometheus::{Registry, TextEncoder, Encoder};
 
-use crate::proxy::ProxyWrapper;
+use crate::proxy::{DiscordProxy};
 
-pub async fn route(req: Request<Body>, proxy: ProxyWrapper, registry: Registry) -> Result<Response<Body>, Infallible> {
+pub async fn route(req: Request<Body>, mut proxy: DiscordProxy, registry: Arc<Registry>) -> Result<Response<Body>, Infallible> {
   let path = req.uri().path();
 
   if path.starts_with("/api/v") {
-    proxy_discord_request(req, proxy).await
+    match proxy.proxy_request(req).await {
+      Ok(result) => Ok(result),
+      Err(err) => {
+        match err {
+          _ => {
+            log::error!("Internal Server Error: {:?}", err);
+  
+            return Ok(Response::builder().status(500).body("Internal Server Error".into()).unwrap());
+          }
+        }
+      }
+    }
   } else if path == "/health" {
     Ok(Response::new(Body::from("OK")))
   } else if path == "/metrics" {
@@ -27,21 +38,4 @@ pub async fn route(req: Request<Body>, proxy: ProxyWrapper, registry: Registry) 
   } else {
     Ok(Response::builder().status(StatusCode::NOT_FOUND).body(Body::empty()).unwrap())
   }
-}
-
-async fn proxy_discord_request(req: Request<Body>, mut proxy: ProxyWrapper) -> Result<Response<Body>, Infallible> {
-  let result = match proxy.proxy_request(req).await {
-    Ok(result) => result,
-    Err(err) => {
-      match err {
-        _ => {
-          log::error!("Internal Server Error: {:?}", err);
-
-          return Ok(Response::builder().status(500).body("Internal Server Error".into()).unwrap());
-        }
-      }
-    }
-  };
-
-  Ok(result)
 }

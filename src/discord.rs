@@ -1,4 +1,5 @@
-use hyper::{Request, Body, body::Buf, StatusCode};
+use hyper::{Request, Body, body::Buf, StatusCode, Client, client::HttpConnector};
+use hyper_tls::HttpsConnector;
 use serde::Deserialize;
 use thiserror::Error;
 
@@ -38,14 +39,14 @@ pub enum DiscordError {
 
 
 impl DiscordProxy {
-  pub async fn fetch_discord_global_ratelimit(&mut self, token: &str) -> Result<u16, DiscordError> {
+  pub async fn fetch_discord_global_ratelimit(client: Client<HttpsConnector<HttpConnector>>, token: &str) -> Result<u16, DiscordError> {
     let req = Request::builder()
       .method("GET")
       .uri("https://discord.com/api/v10/gateway/bot")
       .header("Authorization", token)
       .body(Body::empty()).unwrap();
 
-    let result = self.client.request(req).await?;
+    let result = client.request(req).await?;
 
     if !result.status().is_success() {
       return Err(DiscordError::DiscordError(result.status()));

@@ -2,7 +2,7 @@ use std::{sync::{Arc}, collections::HashMap};
 
 use deadpool_redis::{Config, Runtime, Pool, PoolError, Connection};
 use futures_util::StreamExt;
-use redis::{Script, RedisError, aio::PubSub};
+use redis::{Script, RedisError, aio::PubSub, ScriptInvocation};
 use thiserror::Error;
 use tokio::{sync::{oneshot::{self, error::RecvError}, Mutex, RwLock}};
 
@@ -11,6 +11,17 @@ pub struct RedisClient {
   pub pool: Pool,
   
   pubsub_channels: Arc<RwLock<HashMap<String, Arc<PubSubChannel>>>>,
+
+  pub check_global_rl: Script,
+  pub check_route_rl: Script,
+
+  pub expire_global: Script,
+  pub expire_route: Script,
+
+  pub lock_bucket: Script,
+
+  pub unlock_global: Script,
+  pub unlock_route: Script,
 }
 
 pub struct PubSubChannel {
@@ -52,7 +63,18 @@ impl RedisClient {
     let instance = Self {
       pool,
 
-      pubsub_channels: Arc::new(RwLock::new(HashMap::new()))
+      pubsub_channels: Arc::new(RwLock::new(HashMap::new())),
+
+      check_global_rl: Script::new(include_str!("./scripts/check_global_rl.lua")),
+      check_route_rl: Script::new(include_str!("./scripts/check_route_rl.lua")),
+
+      expire_global: Script::new(include_str!("./scripts/expire_global.lua")),
+      expire_route: Script::new(include_str!("./scripts/expire_route.lua")),
+
+      lock_bucket: Script::new(include_str!("./scripts/lock_bucket.lua")),
+
+      unlock_global: Script::new(include_str!("./scripts/unlock_global.lua")),
+      unlock_route: Script::new(include_str!("./scripts/unlock_route.lua")),
     };
     
     let pubsub_instance = instance.clone();
@@ -246,8 +268,12 @@ impl RedisClient {
   //
   // Returns a list containing status of both global and bucket ratelimits.
   // - [global_ratelimit_status, bucket_ratelimit_status]
-  pub fn check_global_and_route_ratelimits() -> Script {
-    Script::new(include_str!("scripts/check_global_and_route_rl.lua"))
+  // pub fn check_global_and_route_ratelimits(&self) -> ScriptInvocation {
+  //   Script::new(include_str!("scripts/check_global_and_route_rl.lua"))
+  // }
+
+  pub fn check_global_rl(&self) -> ScriptInvocation {
+    self.check_global_rl.prepare_invoke()
   }
 
   // Returned ratelimit status can be:
@@ -260,8 +286,8 @@ impl RedisClient {
   //
   // Returns the bucket ratelimit status.
   // - bucket_ratelimit_status
-  pub fn check_route_ratelimit() -> Script {
-    Script::new(include_str!("scripts/check_route_rl.lua"))
+  pub fn check_route_rl(&self) -> ScriptInvocation {
+    self.check_route_rl.prepare_invoke()
   }
 
   // Takes one Key:
@@ -271,8 +297,8 @@ impl RedisClient {
   // - Random data to lock the bucket with.
   //
   // Returns true if we obtained the lock, false if not.
-  pub fn lock_bucket() -> Script { 
-    Script::new(include_str!("scripts/lock_bucket.lua"))
+  pub fn lock_bucket(&self) -> ScriptInvocation { 
+    self.lock_bucket.prepare_invoke()
   }
 
   // Takes one Key:
@@ -283,8 +309,19 @@ impl RedisClient {
   // - Global ratelimit
   //
   // Returns true if we unlocked the global bucket, false if we were too slow.
-  pub fn unlock_global_bucket() -> Script {
-    Script::new(include_str!("scripts/unlock_global_bucket.lua"))
+  pub fn unlock_global(&self) -> ScriptInvocation {
+    self.unlock_global.prepare_invoke()
+  }
+
+  // Takes one Key:
+  // - Bucket ID
+  //
+  // And three Arguments:
+  // - Lock value to check against.
+  // - Bucket ratelimit
+  // - Bucket ratelimit expiration time (in ms)
+  pub fn unlock_route(&self) -> ScriptInvocation {
+    self.unlock_route.prepare_invoke()
   }
 
   // Takes two Keys:
@@ -298,8 +335,26 @@ impl RedisClient {
   // - Route bucket expiration time (in ms)
   //
   // Returns true if we unlocked the route bucket, false if we were too slow.
-  pub fn expire_global_and_unlock_route_buckets() -> Script {
-    Script::new(include_str!("scripts/expire_global_and_unlock_route_buckets.lua"))
+  // pub fn expire_global_and_unlock_route_buckets(&self) -> ScriptInvocation {
+  //   Script::new(include_str!("scripts/expire_global_and_unlock_route_buckets.lua"))
+  // }
+
+  // Takes one key:
+  // - Bot ID
+  //
+  // And one argument:
+  // - Global ratelimit expiration time (in ms)
+  pub fn expire_global(&self) -> ScriptInvocation {
+    self.expire_global.prepare_invoke()
+  }
+
+  // Takes one key:
+  // - Bucket ID
+  //
+  // And one argument:
+  // - Bucket ratelimit expiration time (in ms)
+  pub fn expire_route(&self) -> ScriptInvocation {
+    self.expire_route.prepare_invoke()
   }
 
   // Takes two Keys:
@@ -311,7 +366,7 @@ impl RedisClient {
   // - Bucket ratelimit expiration time (in ms)
   //
   // Returns nothing.
-  pub fn expire_global_and_route_buckets() -> Script {
-    Script::new(include_str!("scripts/expire_global_and_route_buckets.lua"))
-  }
+  // pub fn expire_global_and_route_buckets(&self) -> ScriptInvocation {
+  //   Script::new(include_str!("scripts/expire_global_and_route_buckets.lua"))
+  // }
 }

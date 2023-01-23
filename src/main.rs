@@ -1,10 +1,10 @@
-use std::{net::SocketAddr, env, time::Duration, process::exit, str::FromStr};
+use std::{net::SocketAddr, env, time::Duration, process::exit, str::FromStr, sync::Arc};
 use hyper::{Client, service::{service_fn}, server::conn::Http};
 use hyper_tls::HttpsConnector;
 use prometheus::Registry;
 use tokio::{net::TcpListener, sync::watch};
 
-use crate::{proxy::{ProxyWrapper, DiscordProxyConfig, Metrics}, routes::route, redis::RedisClient};
+use crate::{proxy::{DiscordProxyConfig, Metrics, DiscordProxy}, routes::route, redis::RedisClient};
 
 mod redis;
 
@@ -71,14 +71,14 @@ async fn main() {
   let bucket_ratelimit_strategy = env::var("BUCKET_RATELIMIT_STRATEGY").unwrap_or("strict".to_string())
     .parse::<NewBucketStrategy>().expect("BUCKET_RATELIMIT_STRATEGY must be either 'Strict' or 'Loose'.");
 
-  let storage = RedisClient::new(redis_host, redis_port, redis_user, redis_pass, redis_pool_size).await;
+  let redis = RedisClient::new(redis_host, redis_port, redis_user, redis_pass, redis_pool_size).await;
   log::info!("Connected to Redis.");
 
   let https = HttpsConnector::new();
   let https_client = Client::builder()
     .build::<_, hyper::Body>(https);
 
-  let prometheus_registry = Registry::new();
+  let prometheus_registry = Arc::new(Registry::new());
   let request_histogram = prometheus::HistogramVec::new(prometheus::HistogramOpts::new(
     "request_results",
     "Results of attempted Discord API requests."
@@ -95,13 +95,18 @@ async fn main() {
   let enable_metrics: bool = env::var("ENABLE_METRICS").unwrap_or("true".to_string())
     .parse().expect("METRICS must be a boolean value.");
 
-  let proxy = ProxyWrapper::new(DiscordProxyConfig::new(
+  let proxy_config = DiscordProxyConfig::new(
     global_ratelimit_strategy,
     bucket_ratelimit_strategy,
+    200,
     Duration::from_millis(lock_wait_timeout),
     Duration::from_millis(ratelimit_timeout),
     enable_metrics
-  ), &metrics, &storage, &https_client);
+  );
+
+  let proxy = DiscordProxy::new(
+    redis, https_client, metrics, proxy_config
+  );
 
   let host = env::var("HOST").unwrap_or("127.0.0.1".to_string());
   let port = env::var("PORT").unwrap_or("8080".to_string());
@@ -109,7 +114,7 @@ async fn main() {
   let addr: SocketAddr = format!("{}:{}", host, port).parse().expect("Failed to parse socket address.");
   let listener = TcpListener::bind(addr).await.expect("Failed to bind to socket.");
   
-  log::info!("Starting HTTP Server on http://{}", addr);
+  println!("Starting HTTP Server on http://{}", addr);
 
   let webserver = tokio::task::spawn(async move {
     loop {
@@ -159,7 +164,7 @@ async fn main() {
 
   tokio::select! {
     _ = webserver => {
-      log::info!("Webserver exited.");
+      println!("Webserver exited.");
     }
   }
 

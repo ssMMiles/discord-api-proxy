@@ -8,6 +8,7 @@ pub enum Resources {
   Webhooks,
   Invites,
   Interactions,
+  OAuth2,
   None
 }
 
@@ -19,6 +20,7 @@ impl Resources {
       "webhooks" => Self::Webhooks,
       "invites" => Self::Invites,
       "interactions" => Self::Interactions,
+      "oauth2" => Self::OAuth2,
       _ => Self::None,
     }
   }
@@ -32,6 +34,7 @@ impl ToString for Resources {
       Self::Webhooks => "webhooks".to_string(),
       Self::Invites => "invites".to_string(),
       Self::Interactions => "interactions".to_string(),
+      Self::OAuth2 => "oauth2".to_string(),
       Self::None => "".to_string(),
     }
   }
@@ -40,10 +43,6 @@ impl ToString for Resources {
 pub struct RouteInfo {
   pub resource: Resources,
   pub route: String,
-}
-
-pub fn get_route_bucket(bot_id: u64, method: &Method, route: &str) -> String {
-  format!("{}:{}-{}", bot_id, method.to_string(), route)
 }
 
 pub fn get_route_info(method: &Method, path: &str) -> RouteInfo {

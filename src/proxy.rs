@@ -1,50 +1,20 @@
-use std::{ops::{DerefMut, Deref}, time::{Duration, SystemTime, UNIX_EPOCH}, str::FromStr, sync::{atomic::{AtomicBool, Ordering}, Arc}};
+use std::{time::{Duration, SystemTime, UNIX_EPOCH}, str::FromStr, sync::{atomic::{AtomicBool, Ordering}, Arc}};
 use base64::decode;
-use hyper::{Request, Client, client::HttpConnector, Body, Response, StatusCode, http::{HeaderValue, uri::PathAndQuery}, HeaderMap, Uri};
+use hyper::{Request, Client, client::HttpConnector, Body, Response, StatusCode, http::HeaderValue, HeaderMap, Uri};
 use hyper_tls::HttpsConnector;
 use prometheus::HistogramVec;
 use thiserror::Error;
 use tokio::time::Instant;
 
-use crate::{redis::{RedisClient, RedisErrorWrapper}, buckets::{Resources, get_route_info, RouteInfo, get_route_bucket}, ratelimits::RatelimitStatus, discord::DiscordError, NewBucketStrategy};
+use crate::{redis::{RedisClient, RedisErrorWrapper}, buckets::{Resources, get_route_info, RouteInfo}, ratelimits::RatelimitStatus, discord::DiscordError, NewBucketStrategy};
 
-#[derive(Clone)]
-pub struct ProxyWrapper {
-  pub proxy: DiscordProxy
-}
-
-impl ProxyWrapper {
-  pub fn new(config: DiscordProxyConfig, metrics: &Metrics, redis: &RedisClient, client: &Client<HttpsConnector<HttpConnector>>) -> Self {
-    Self { 
-      proxy: DiscordProxy { 
-        config: config.clone(), 
-        disabled: Arc::new(AtomicBool::new(false)),
-        metrics: metrics.clone(), 
-        redis: redis.clone(), 
-        client: client.clone() 
-      }
-    }
-  }
-}
-
-impl Deref for ProxyWrapper {
-  type Target = DiscordProxy;
-
-  fn deref(&self) -> &Self::Target {
-    &self.proxy
-  }
-}
-
-impl DerefMut for ProxyWrapper {
-  fn deref_mut(&mut self) -> &mut Self::Target {
-    &mut self.proxy
-  }
-}
 
 #[derive(Clone)]
 pub struct DiscordProxyConfig {
   pub global: NewBucketStrategy,
   pub buckets: NewBucketStrategy,
+
+  pub global_time_slice_offset_ms: u64,
 
   pub lock_timeout: Duration,
   pub ratelimit_timeout: Duration,
@@ -53,8 +23,17 @@ pub struct DiscordProxyConfig {
 }
 
 impl DiscordProxyConfig {
-  pub fn new(global: NewBucketStrategy, buckets: NewBucketStrategy, lock_timeout: Duration, ratelimit_timeout: Duration, enable_metrics: bool) -> Self {
-    Self { global, buckets, lock_timeout, ratelimit_timeout, enable_metrics }
+  pub fn new(global: NewBucketStrategy, buckets: NewBucketStrategy, global_time_slice_offset_ms: u64, lock_timeout: Duration, ratelimit_timeout: Duration, enable_metrics: bool) -> Self {
+    Self { 
+      global, 
+      buckets, 
+
+      global_time_slice_offset_ms,
+
+      lock_timeout, 
+      ratelimit_timeout, 
+      
+      enable_metrics }
   }
 }
 
@@ -65,17 +44,27 @@ pub struct Metrics {
 
 #[derive(Clone)]
 pub struct DiscordProxy {
-  pub redis: RedisClient,
+  pub redis: Arc<RedisClient>,
   pub client: Client<HttpsConnector<HttpConnector>>,
 
   disabled: Arc<AtomicBool>,
 
-  metrics: Metrics,
+  metrics: Arc<Metrics>,
 
-  pub config: DiscordProxyConfig
+  pub config: Arc<DiscordProxyConfig>,
 }
 
 impl DiscordProxy {
+  pub fn new(redis: RedisClient, client: Client<HttpsConnector<HttpConnector>>, metrics: Metrics, config: DiscordProxyConfig) -> Self {
+    Self {
+      redis: Arc::new(redis),
+      client,
+      disabled: Arc::new(AtomicBool::new(false)),
+      metrics: Arc::new(metrics),
+      config: Arc::new(config)
+    }
+  }
+
   pub async fn proxy_request(&mut self, mut req: Request<Body>) -> Result<Response<Body>, ProxyError> {
     let start = Instant::now();
 
@@ -84,23 +73,28 @@ impl DiscordProxy {
     
     let route_info = get_route_info(&method, &path);
 
-    let (token, bot_id) = match parse_headers(req.headers(), &route_info) {
-      Ok((token, bot_id)) => (token, bot_id),
+    let auth = match parse_headers(req.headers(), &route_info) {
+      Ok(auth) => auth,
       Err(message) => return Ok(
         Response::builder().status(400).body(message.into()).unwrap()
       )
     };
 
-    let route_bucket = get_route_bucket(bot_id, &method, &path);
+    let (id, token): (&str, Option<&str>) = match &auth {
+      Some((id, token)) => (id, Some(token)),
+      None => ("noauth", None)
+    };
 
-    let ratelimit_status = self.check_ratelimits(&bot_id, &token, &route_info, &route_bucket).await?;
+    let route_bucket = format!("{{{}:{}-{}}}", id, method.to_string(), &route_info.route);
+
+    let ratelimit_status = self.check_ratelimits(id, &token, &route_info, &route_bucket).await?;
 
     match ratelimit_status {
       RatelimitStatus::GlobalRatelimited => {
-        return Ok(generate_ratelimit_response(&bot_id.to_string()));
+        return Ok(generate_ratelimit_response(id));
       },
       RatelimitStatus::RouteRatelimited => {
-        return Ok(generate_ratelimit_response(&route_bucket));
+        return Ok(generate_ratelimit_response(&route_info.route));
       },
       RatelimitStatus::ProxyOverloaded => {
         return Ok(Response::builder().status(503).body("Proxy Overloaded".into()).unwrap());
@@ -112,9 +106,10 @@ impl DiscordProxy {
     req.headers_mut().insert("User-Agent", HeaderValue::from_static("limbo-labs/discord-api-proxy/1.0"));
     
     let path_and_query = match req.uri().path_and_query() {
-      Some(path_and_query) => path_and_query.clone(),
-      None => PathAndQuery::from_static("/")
+      Some(path_and_query) => path_and_query.as_str(),
+      None => "/"
     };
+
     *req.uri_mut() = Uri::from_str(&format!("https://discord.com{}", path_and_query)).unwrap();
 
     if self.disabled.load(Ordering::Acquire) {
@@ -125,7 +120,7 @@ impl DiscordProxy {
     let sent_request_at = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis();
 
     if let RatelimitStatus::Ok(bucket_lock) = ratelimit_status {
-      match self.update_ratelimits(bot_id, result.headers(), route_bucket.clone(), bucket_lock, sent_request_at).await {
+      match self.update_ratelimits(id.to_string(), result.headers(), route_bucket.to_string(), bucket_lock, sent_request_at).await {
         Ok(_) => {},
         Err(e) => {
           log::error!("Error updating ratelimits after proxying request: {}", e);
@@ -156,7 +151,7 @@ impl DiscordProxy {
 
     if self.config.enable_metrics {
       self.metrics.requests.with_label_values(
-        &[&bot_id.to_string(), &method.to_string(), &path, status.as_str()]
+        &[id, &method.to_string(), &path, status.as_str()]
       ).observe(start.elapsed().as_secs_f64());
     }
 
@@ -166,23 +161,7 @@ impl DiscordProxy {
   }
 }
 
-fn parse_headers(headers: &HeaderMap, route_info: &RouteInfo) -> Result<(String, u64), String> {
-  if route_info.resource == Resources::Webhooks || route_info.resource == Resources::Interactions {
-    let mut path_segments = route_info.route.split("/").skip(1);
-
-    let id = match path_segments.next() {
-      Some(id) => id.parse::<u64>().map_err(|_| "Invalid ID")?,
-      None => return Err("Invalid ID".to_string())
-    };
-
-    let token = match path_segments.next() {
-      Some(token) => token.parse::<String>().map_err(|_| "Invalid Token")?,
-      None => return Err("Invalid Token".to_string())
-    };
-
-    return Ok((token, id))
-  }
-
+fn parse_headers(headers: &HeaderMap, route_info: &RouteInfo) -> Result<Option<(String, String)>, String> {
   // Use auth header by default
   let token = match headers.get("Authorization") {
     Some(header) => {
@@ -197,7 +176,15 @@ fn parse_headers(headers: &HeaderMap, route_info: &RouteInfo) -> Result<(String,
 
       token.to_string()
     },
-    None => return Err("Missing Authorization header".to_string())
+    None => {
+      if route_info.resource == Resources::Webhooks && route_info.route.starts_with("webhooks/!*/!")
+       || route_info.resource == Resources::OAuth2
+       || route_info.resource == Resources::Interactions { 
+        return Ok(None)
+      }
+      
+      return Err("Missing Authorization header".to_string())
+    }
   };
 
   let base64_bot_id = match token[4..].split('.').nth(0) {
@@ -208,10 +195,9 @@ fn parse_headers(headers: &HeaderMap, route_info: &RouteInfo) -> Result<(String,
   let bot_id = String::from_utf8(
     decode(base64_bot_id)
     .map_err(|_| "Invalid Authorization header".to_string())?
-  ).map_err(|_| "Invalid Authorization header".to_string())?
-  .parse::<u64>().map_err(|_| "Invalid Authorization header".to_string())?;
+  ).map_err(|_| "Invalid Authorization header".to_string())?;
 
-  Ok((token, bot_id))
+  Ok(Some((bot_id, token)))
 }
 
 fn generate_ratelimit_response(bucket: &str) -> Response<Body> {
@@ -229,9 +215,9 @@ pub enum ProxyError {
   #[error("Redis Error: {0}")]
   RedisError(#[from] RedisErrorWrapper),
 
-  #[error("Error proxying request: {0}")]
+  #[error("Error Proxying Request: {0}")]
   RequestError(#[from] hyper::Error),
   
-  #[error("Error fetching Global ratelimit: {0}")]
+  #[error("Error fetching Global RL from Discord: {0}")]
   DiscordError(#[from] DiscordError),
 }
