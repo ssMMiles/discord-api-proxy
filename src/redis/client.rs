@@ -1,5 +1,6 @@
-use std::{sync::{Arc}, collections::HashMap, time::Duration};
+use std::{sync::Arc, time::Duration};
 
+use ahash::AHashMap;
 use fred::{pool::RedisPool, prelude::{RedisError, PubsubInterface, LuaInterface, ClientLike}, clients::SubscriberClient,  types::{RedisConfig, ReconnectPolicy, PerformanceConfig, RedisValue}, util::sha1_hash};
 use thiserror::Error;
 use tokio::{sync::{oneshot::{self, error::RecvError}, Mutex, RwLock}, time::sleep, select};
@@ -69,7 +70,7 @@ pub struct ProxyRedisClient {
   pub pool: RedisPool,
   
   pubsub_receiver: SubscriberClient,
-  pubsub_channels: Arc<RwLock<HashMap<String, Arc<PubSubChannel>>>>,
+  pubsub_channels: Arc<RwLock<AHashMap<String, Arc<PubSubChannel>>>>,
 
   script_hashes: Arc<ProxyScriptHashes>,  
 }
@@ -112,7 +113,7 @@ impl ProxyRedisClient {
       pool,
 
       pubsub_receiver,
-      pubsub_channels: Arc::new(RwLock::new(HashMap::new())),
+      pubsub_channels: Arc::new(RwLock::new(AHashMap::new())),
 
       script_hashes: Arc::new(ProxyScriptHashes::new()),
     };
