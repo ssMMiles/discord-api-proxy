@@ -1,10 +1,9 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use deadpool_redis::Connection;
-use futures_util::{future::join, try_join};
+use fred::prelude::KeysInterface;
+use futures_util::try_join;
 use hyper::HeaderMap;
 use rand::{thread_rng, distributions::Alphanumeric, Rng};
-use redis::AsyncCommands;
 use tokio::{time::Instant, select};
 
 use crate::{proxy::{DiscordProxy, ProxyError}, buckets::{Resources, RouteInfo}, redis::RedisErrorWrapper, NewBucketStrategy};
@@ -44,28 +43,26 @@ impl DiscordProxy {
     let global_rl_time_slice = epoch.as_millis() / 1000 + (self.config.global_time_slice_offset_ms as u128);
     let global_rl_slice_id = &format!("{}-{}", global_id, global_rl_time_slice);
 
-    let (mut redis_conn_1, mut redis_conn_2): (Connection, Connection) = try_join!(self.redis.pool.get(), self.redis.pool.get())
-      .map_err(RedisErrorWrapper::RedisPoolError)?;
-
     let status = loop {
       let ratelimit_check_started_at = Instant::now();
 
-      let mut check_global_rl = self.redis.check_global_rl();
-      check_global_rl.key(global_id).key(global_rl_slice_id);
 
-      let mut check_route_rl = self.redis.check_route_rl();
-      check_route_rl.key(route_bucket);
+      let ratelimits: (Option<u16>, Option<u16>) = if self.config.clustered_redis {
+        let check_global_rl = self.redis.check_global_rl(global_id, global_rl_slice_id);
+        let check_route_rl = self.redis.check_route_rl(route_bucket);
 
-      let ratelimits = try_join!(
-        check_global_rl.invoke_async::<_, Option<u16>>(&mut redis_conn_1), 
-        check_route_rl.invoke_async::<_, Option<u16>>(&mut redis_conn_2)
-      ).expect("Failed to check global or route bucket.");
-
-      // let ratelimits = RedisClient::check_global_and_route_ratelimits()
-      //   .key(id)
-      //   .key(route_bucket)
-      // .invoke_async::<_,Vec<Option<u16>>>(&mut redis_conn).await
-      // .map_err(RedisErrorWrapper::RedisError)?;
+        try_join!(
+          check_global_rl,
+          check_route_rl
+        )?
+      } else {
+        self.redis.check_global_and_route_rl(global_id, global_rl_slice_id, route_bucket).await?
+      };
+      
+      // let ratelimits = try_join!(
+      //   check_global_rl,
+      //   check_route_rl
+      // ).expect("Failed to check global or route bucket.");
 
       let global_ratelimit = ratelimits.0;
       let route_ratelimit = ratelimits.1;
@@ -74,15 +71,15 @@ impl DiscordProxy {
         break RatelimitStatus::ProxyOverloaded;
       }
 
-      let is_global_ratelimited = self.is_global_ratelimited(&mut redis_conn_1, global_id, token, global_ratelimit);
-      let is_route_ratelimited = self.is_route_ratelimited(&mut redis_conn_2, route_bucket, route_ratelimit);
+      let is_global_ratelimited = self.is_global_ratelimited(global_id, token, global_ratelimit);
+      let is_route_ratelimited = self.is_route_ratelimited(route_bucket, route_ratelimit);
 
-      let is_ratelimited = join(
+      let is_ratelimited = try_join!(
         is_global_ratelimited,
         is_route_ratelimited
-      ).await;
+      )?;
 
-      match is_ratelimited.0? {
+      match is_ratelimited.0 {
         Some(status) => {
           if status != RatelimitStatus::Ok(None) {
             break status
@@ -91,15 +88,13 @@ impl DiscordProxy {
         None => continue
       }
 
-      match is_ratelimited.1? {
+      match is_ratelimited.1 {
         Some(status) => {
-          if status != RatelimitStatus::Ok(None) {
-            drop(redis_conn_2);
-
-            redis_conn_1.decr::<&str, u8, bool>(global_rl_slice_id, 1).await.map_err(RedisErrorWrapper::RedisError)?;
+          if status != RatelimitStatus::Ok(None) && self.config.clustered_redis {
+            self.redis.pool.decr::<_, &str>(global_rl_slice_id).await?;
           }
-
-          break status
+          
+          break status;
         },
         None => continue
       }
@@ -111,30 +106,26 @@ impl DiscordProxy {
   }
 
   async fn check_route_ratelimit(&mut self, route_bucket: &str) -> Result<RatelimitStatus, ProxyError> {
-    let mut redis_conn = self.redis.pool.get().await.unwrap();
-
-    return loop {
+    loop {
       let ratelimit_check_started_at = Instant::now();
 
-      let ratelimit = self.redis.check_route_rl()
-        .key(route_bucket)
-      .invoke_async::<_,Option<u16>>(&mut redis_conn).await.map_err(RedisErrorWrapper::RedisError)?;
+      let ratelimit = self.redis.check_route_rl(route_bucket).await?;
 
       if ratelimit_check_is_overloaded(route_bucket, ratelimit_check_started_at) {
         break Ok(RatelimitStatus::ProxyOverloaded);
       }
 
-      match self.is_route_ratelimited(&mut redis_conn, route_bucket, ratelimit).await? {
+      match self.is_route_ratelimited(route_bucket, ratelimit).await? {
         Some(status) => {
           log::debug!("[{}] Bucket Ratelimit Status: {:?} - Count: {}", &route_bucket, &status, &ratelimit.unwrap_or(0));
           break Ok(status)
         },
         None => continue
       }
-    };
+    }
   }
 
-  async fn is_global_ratelimited(&self, redis_conn: &mut Connection, global_id: &str, token: &Option<&str>, ratelimit: Option<u16>) -> Result<Option<RatelimitStatus>, ProxyError> {
+  async fn is_global_ratelimited(&self, global_id: &str, token: &Option<&str>, ratelimit: Option<u16>) -> Result<Option<RatelimitStatus>, ProxyError> {
     match ratelimit {
       Some(count) => {
         let hit_ratelimit = count == 0;
@@ -147,11 +138,7 @@ impl DiscordProxy {
         log::debug!("[{}] Global ratelimit not set, will try to acquire a lock and set it...", global_id);
 
         let lock_value = random_string(8);
-        let lock = self.redis.lock_bucket()
-          .key(global_id)
-            .arg(&lock_value)
-        .invoke_async::<_, bool>(redis_conn).await
-        .map_err(RedisErrorWrapper::RedisError)?;
+        let lock = self.redis.lock_bucket(global_id, &lock_value).await?;
 
         let mut ratelimit = 50;
         if lock {
@@ -171,12 +158,7 @@ impl DiscordProxy {
             }
           }
 
-          if self.redis.unlock_global()
-            .key(global_id)
-              .arg(&lock_value)
-              .arg(ratelimit)
-          .invoke_async::<_, bool>(redis_conn).await
-          .map_err(RedisErrorWrapper::RedisError)? {
+          if self.redis.unlock_global(global_id, &lock_value, ratelimit).await? {
             log::debug!("[{}] Global ratelimit set to {} and lock released.", &global_id, &ratelimit);
           } else {
             log::debug!("[{}] Global ratelimit lock expired before we could release it.", &global_id);
@@ -212,7 +194,7 @@ impl DiscordProxy {
     Ok(Some(RatelimitStatus::Ok(None)))
   }
 
-  async fn is_route_ratelimited(&self, redis_conn: &mut Connection, route_bucket: &str, ratelimit: Option<u16>) -> Result<Option<RatelimitStatus>, ProxyError> {
+  async fn is_route_ratelimited(&self, route_bucket: &str, ratelimit: Option<u16>) -> Result<Option<RatelimitStatus>, ProxyError> {
     match ratelimit {
       Some(count) => {
         let hit_ratelimit = count == 0;
@@ -225,10 +207,7 @@ impl DiscordProxy {
         log::debug!("[{}] Ratelimit not set, will try to acquire a lock and set it...", &route_bucket);
 
         let lock_value = random_string(8);
-        let lock = self.redis.lock_bucket()
-          .key(route_bucket)
-            .arg(&lock_value)
-        .invoke_async::<_, bool>(redis_conn).await.map_err(RedisErrorWrapper::RedisError)?;
+        let lock = self.redis.lock_bucket(route_bucket, &lock_value).await?;
 
         if lock {
           log::debug!("[{}] Acquired bucket lock.", route_bucket);
@@ -261,7 +240,7 @@ impl DiscordProxy {
     Ok(Some(RatelimitStatus::Ok(None)))
   }
 
-  pub async fn update_ratelimits(&mut self, global_rl_key: String, headers: &HeaderMap, bucket: String, bucket_lock: Option<String>, sent_request_at: u128) -> Result<(), RedisErrorWrapper> {
+  pub async fn update_ratelimits(&mut self, _global_rl_key: String, headers: &HeaderMap, bucket: String, bucket_lock: Option<String>, _sent_request_at: u128) -> Result<(), RedisErrorWrapper> {
     let bucket_limit = match headers.get("X-RateLimit-Limit") {
       Some(limit) => limit.clone().to_str().unwrap().parse::<u16>().unwrap(),
       None => 0
@@ -277,89 +256,21 @@ impl DiscordProxy {
       None => "0".to_string()
     };
 
-    let sent_at = sent_request_at as u64 + 500;
-
-    let redis = self.redis.clone();
-    let (mut redis_conn_1, mut redis_conn_2): (Connection, Connection) = try_join!(redis.pool.get(), redis.pool.get())?;
-
-    tokio::task::spawn(async move {
-      if bucket_lock.is_some() {
+    if bucket_lock.is_some() {
+      let redis = self.redis.clone();
+      tokio::task::spawn(async move {
         log::debug!("[{}] New bucket! Setting ratelimit to {}, resetting at {}", bucket, bucket_limit, reset_at);
 
-        // let mut expire_global = redis.expire_global();
-        // expire_global.key(&global_rl_key)
-        //   .arg(&sent_at);
-        
-        let mut expire_route = redis.unlock_route();
-        expire_route.key(&bucket)
-          .arg(&bucket_lock.unwrap())
-          .arg(&bucket_limit)
-          .arg(&reset_at);
-
-        // try_join!(
-        //   expire_global.invoke_async::<_, bool>(&mut redis_conn_1), 
-        //   expire_route.invoke_async::<_, bool>(&mut redis_conn_2)
-        // ).expect("Failed to expire global or unlock route bucket.");
-
-        expire_route.invoke_async::<_, bool>(&mut redis_conn_1).await
-          .expect("Failed to update route expiry.");
-
-        // RedisClient::expire_global()
-        //   .key(&global_rl_key)
-        //     .arg(&(sent_request_at as u64 + 1000))
-        // .invoke_async::<_, bool>(&mut redis_conn).await
-        // .expect("Failed to update global ratelimit expiry time.");
-
-        // RedisClient::unlock_route_bucket()
-        //   .key(&bucket)
-        //     .arg(&bucket_lock.unwrap())
-        //     .arg(&bucket_limit)
-        //     .arg(&reset_at)
-        // .invoke_async::<_, bool>(&mut redis_conn).await
-        // .expect("Failed to unlock route bucket and update its expiry times.");
-
-        // RedisClient::expire_global_and_unlock_route_buckets()
-        //   .key(&global_rl_key)
-        //     .arg(&(sent_request_at as u64 + 1000))
-        //   .key(bucket)
-        //     .arg(&bucket_lock.unwrap())
-        //     .arg(&bucket_limit)
-        //     .arg(&reset_at)
-        // .invoke_async::<_, bool>(&mut redis_conn).await
-        // .expect("Failed to unlock route bucket and update expiry times.");
-      } else {
-        let mut expire_global = redis.expire_global();
-        expire_global.key(&global_rl_key).arg(&sent_at);
-
-        let mut expire_route_bucket = redis.expire_route();
-        expire_route_bucket.key(&bucket).arg(&reset_at);
-
-        try_join!(
-          expire_global.invoke_async::<_, bool>(&mut redis_conn_1), 
-          expire_route_bucket.invoke_async::<_, bool>(&mut redis_conn_2)
-        ).expect("Failed to expire global or route bucket.");
-
-        // RedisClient::expire_global()
-        //   .key(&global_rl_key)
-        //     .arg(&(sent_request_at as u64 + 1000))
-        // .invoke_async::<_, bool>(&mut redis_conn).await
-        // .expect("Failed to update global ratelimit expiry time.");
-
-        // RedisClient::expire_route_bucket()
-        //   .key(&bucket)
-        //     .arg(&reset_at)
-        // .invoke_async::<_, bool>(&mut redis_conn).await
-        // .expect("Failed to update bucket expiry time.");
-
-        // RedisClient::expire_global_and_route_buckets()
-        //   .key(&global_rl_key)
-        //     .arg(&(sent_request_at as u64 + 1000))
-        //   .key(bucket)
-        //     .arg(&reset_at)
-        // .invoke_async::<_, bool>(&mut redis_conn).await
-        // .expect("Failed to update bucket expiry times.");
-      }
-    });
+        if redis.unlock_route(
+          &bucket, 
+          &bucket_lock.unwrap(), 
+          bucket_limit, 
+          &reset_at
+        ).await.is_err() {
+          log::debug!("[{}] Failed to unlock route, lock may have expired.", bucket);
+        }
+      });
+    }
 
     Ok(())
   }

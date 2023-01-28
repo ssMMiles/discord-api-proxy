@@ -1,3 +1,12 @@
+--  Takes two Keys:
+--  - Bot ID
+--  - Bucket ID
+-- 
+--  And four Arguments:
+--  - Global ratelimit expiration time (in ms)
+--  - Lock value to check against.
+--  - Route bucket limit
+--  - Route bucket expiration time (in ms)
 local global_count_key = KEYS[1] .. ':count'
 local global_expire_at = tonumber(ARGV[1])
 

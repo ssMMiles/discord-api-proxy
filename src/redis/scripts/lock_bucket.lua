@@ -1,3 +1,10 @@
+--  Takes one Key:
+--  - Bot ID/Bucket ID
+-- 
+--  And one Argument:
+--  - Random data to lock the bucket with.
+-- 
+--  Returns true if we obtained the lock, false if not.
 local route_key = KEYS[1]
 local rl = redis.call('GET', route_key)
 

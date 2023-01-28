@@ -1,3 +1,3 @@
 mod client;
 
-pub use crate::redis::client::{RedisClient, RedisErrorWrapper};
+pub use crate::redis::client::{ProxyRedisClient, RedisErrorWrapper};

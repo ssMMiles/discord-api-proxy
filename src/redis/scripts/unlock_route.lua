@@ -1,3 +1,10 @@
+--  Takes one Key:
+--  - Bucket ID
+-- 
+--  And three Arguments:
+--  - Lock value to check against.
+--  - Bucket ratelimit
+--  - Bucket ratelimit expiration time (in ms)
 local route_key = KEYS[1]
 local route_lock_key = route_key .. ':lock'
 

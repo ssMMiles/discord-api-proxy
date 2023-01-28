@@ -4,7 +4,7 @@ use hyper_tls::HttpsConnector;
 use prometheus::Registry;
 use tokio::{net::TcpListener, sync::watch};
 
-use crate::{proxy::{DiscordProxyConfig, Metrics, DiscordProxy}, routes::route, redis::RedisClient};
+use crate::{proxy::{DiscordProxyConfig, Metrics, DiscordProxy}, routes::route, redis::ProxyRedisClient};
 
 mod redis;
 
@@ -55,10 +55,10 @@ async fn main() {
   let redis_port = env::var("REDIS_PORT").unwrap_or("6379".to_string())
     .parse::<u16>().expect("REDIS_PORT must be a valid port number.");
 
-  let redis_user = env::var("REDIS_USER").unwrap_or("".to_string());
-  let redis_pass = env::var("REDIS_PASS").unwrap_or("".to_string());
+  let redis_user = env::var("REDIS_USER").ok();
+  let redis_pass = env::var("REDIS_PASS").ok();
 
-  let redis_pool_size = env::var("REDIS_POOL_SIZE").unwrap_or("48".to_string())
+  let redis_pool_size = env::var("REDIS_POOL_SIZE").unwrap_or("100".to_string())
     .parse::<usize>().expect("REDIS_POOL_SIZE must be a valid integer.");
 
   let lock_wait_timeout = env::var("LOCK_WAIT_TIMEOUT").unwrap_or("500".to_string())
@@ -71,12 +71,23 @@ async fn main() {
   let bucket_ratelimit_strategy = env::var("BUCKET_RATELIMIT_STRATEGY").unwrap_or("strict".to_string())
     .parse::<NewBucketStrategy>().expect("BUCKET_RATELIMIT_STRATEGY must be either 'Strict' or 'Loose'.");
 
-  let redis = RedisClient::new(redis_host, redis_port, redis_user, redis_pass, redis_pool_size).await;
-  log::info!("Connected to Redis.");
+  let enable_metrics: bool = env::var("ENABLE_METRICS").unwrap_or("true".to_string())
+    .parse().expect("METRICS must be a boolean value.");
 
-  let https = HttpsConnector::new();
-  let https_client = Client::builder()
-    .build::<_, hyper::Body>(https);
+  let clustered_redis: bool = env::var("REDIS_CLUSTER").unwrap_or("false".to_string())
+    .parse().expect("REDIS_CLUSTER must be a boolean value.");
+
+  let global_time_slice_offset_ms: u64 = env::var("GLOBAL_TIME_SLICE_OFFSET").unwrap_or("200".to_string())
+    .parse().expect("GLOBAL_TIME_SLICE_OFFSET must be a valid integer. (ms)");
+
+  let host = env::var("HOST").unwrap_or("127.0.0.1".to_string());
+  let port = env::var("PORT").unwrap_or("8080".to_string());
+
+  // let redis = RedisClient::new(redis_host, redis_port, redis_user, redis_pass, redis_pool_size).await;
+  // log::info!("Connected to Redis.");
+
+  let redis_client = ProxyRedisClient::new(redis_host, redis_port, redis_user, redis_pass, redis_pool_size).await
+    .expect("FATAL: Failed to connect to Redis.");
 
   let prometheus_registry = Arc::new(Registry::new());
   let request_histogram = prometheus::HistogramVec::new(prometheus::HistogramOpts::new(
@@ -92,14 +103,9 @@ async fn main() {
     requests: request_histogram.clone()
   };
 
-  let enable_metrics: bool = env::var("ENABLE_METRICS").unwrap_or("true".to_string())
-    .parse().expect("METRICS must be a boolean value.");
-
-  let clustered_redis: bool = env::var("REDIS_CLUSTER").unwrap_or("false".to_string())
-    .parse().expect("REDIS_CLUSTER must be a boolean value.");
-
-  let global_time_slice_offset_ms: u64 = env::var("GLOBAL_TIME_SLICE_OFFSET").unwrap_or("200".to_string())
-    .parse().expect("GLOBAL_TIME_SLICE_OFFSET must be a valid integer. (ms)");
+  let https = HttpsConnector::new();
+  let https_client = Client::builder()
+    .build::<_, hyper::Body>(https);
 
   let proxy_config = DiscordProxyConfig::new(
     global_ratelimit_strategy,
@@ -112,14 +118,11 @@ async fn main() {
   );
 
   let proxy = DiscordProxy::new(
-    redis, https_client, metrics, proxy_config
+    redis_client, https_client, metrics, proxy_config
   );
 
-  let host = env::var("HOST").unwrap_or("127.0.0.1".to_string());
-  let port = env::var("PORT").unwrap_or("8080".to_string());
-
   let addr: SocketAddr = format!("{}:{}", host, port).parse().expect("Failed to parse socket address.");
-  let listener = TcpListener::bind(addr).await.expect("Failed to bind to socket.");
+  let listener = TcpListener::bind(addr).await.expect("Failed to bind to socket");
   
   println!("Starting HTTP Server on http://{}", addr);
 

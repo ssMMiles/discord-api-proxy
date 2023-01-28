@@ -1,3 +1,11 @@
+--  Takes one Key:
+--  - Bot ID
+-- 
+--  And two Arguments:
+--  - Lock value to check against.
+--  - Global ratelimit
+-- 
+--  Returns true if we unlocked the global bucket, false if we were too slow.
 local id = KEYS[1]
 local global_lock_key = id .. ':lock'
 

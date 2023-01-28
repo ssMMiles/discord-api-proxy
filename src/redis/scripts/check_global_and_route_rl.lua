@@ -1,7 +1,23 @@
-local global_key = KEYS[1]
-local global_count_key = global_key .. ':count'
+--  Returned ratelimit status can be:
+--  - False/Nil: Ratelimit not found, must be fetched.
+--  - 0: Ratelimit exceeded.
+--  - 1-Infinity: Ratelimit OK, is number of requests in current bucket.
+--  
+--  Takes three Keys: 
+--  - Bot ID
+--  - Global RL Key w/ Time Slice
+--  - Bucket ID
+-- 
+--  Returns a list containing status of both global and bucket ratelimits.
+--  - [global_ratelimit_status, bucket_ratelimit_status]
 
-local global_limit = tonumber(redis.call('GET', global_key))
+-- Global RL Check
+local id = KEYS[1]
+
+local global_rl_key = KEYS[2]
+local global_count_key = global_rl_key .. ':count'
+
+local global_limit = tonumber(redis.call('GET', id))
 
 if global_limit == nil then
   return {false, false}
@@ -17,7 +33,9 @@ if global_count == 1 then
   redis.call('EXPIRE', global_count_key, 3)
 end
 
-local route_key = KEYS[2]
+-- Route RL Check
+
+local route_key = KEYS[3]
 local route_count_key = route_key .. ':count'
 
 local route_limit = tonumber(redis.call('GET', route_key))

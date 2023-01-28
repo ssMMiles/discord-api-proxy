@@ -1,3 +1,13 @@
+--  Returned ratelimit status can be:
+--  - False/Nil: Ratelimit not found, must be fetched.
+--  - 0: Ratelimit exceeded.
+--  - 1-Infinity: Ratelimit OK, is number of requests in current bucket.
+--  
+--  Takes one Key: 
+--  - Bucket ID
+-- 
+--  Returns the bucket ratelimit status.
+--  - bucket_ratelimit_status
 local bucket_key = KEYS[1]
 local bucket_count_key = bucket_key .. ':count'
 

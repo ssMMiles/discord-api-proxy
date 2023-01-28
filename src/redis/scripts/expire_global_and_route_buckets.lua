@@ -1,3 +1,12 @@
+--  Takes two Keys:
+--  - Bot ID
+--  - Bucket ID
+-- 
+--  And two Arguments:
+--  - Global ratelimit expiration time (in ms)
+--  - Bucket ratelimit expiration time (in ms)
+-- 
+--  Returns nothing.
 local global_count_key = KEYS[1] .. ':count'
 local global_expire_at = tonumber(ARGV[1])
 

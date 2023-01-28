@@ -1,12 +1,13 @@
 use std::{time::{Duration, SystemTime, UNIX_EPOCH}, str::FromStr, sync::{atomic::{AtomicBool, Ordering}, Arc}};
 use base64::decode;
+use fred::prelude::RedisError;
 use hyper::{Request, Client, client::HttpConnector, Body, Response, StatusCode, http::HeaderValue, HeaderMap, Uri};
 use hyper_tls::HttpsConnector;
 use prometheus::HistogramVec;
 use thiserror::Error;
 use tokio::time::Instant;
 
-use crate::{redis::{RedisClient, RedisErrorWrapper}, buckets::{Resources, get_route_info, RouteInfo}, ratelimits::RatelimitStatus, discord::DiscordError, NewBucketStrategy};
+use crate::{buckets::{Resources, get_route_info, RouteInfo}, ratelimits::RatelimitStatus, discord::DiscordError, NewBucketStrategy, redis::ProxyRedisClient};
 
 
 #[derive(Clone)]
@@ -48,7 +49,7 @@ pub struct Metrics {
 
 #[derive(Clone)]
 pub struct DiscordProxy {
-  pub redis: Arc<RedisClient>,
+  pub redis: Arc<ProxyRedisClient>,
   pub client: Client<HttpsConnector<HttpConnector>>,
 
   disabled: Arc<AtomicBool>,
@@ -59,7 +60,7 @@ pub struct DiscordProxy {
 }
 
 impl DiscordProxy {
-  pub fn new(redis: RedisClient, client: Client<HttpsConnector<HttpConnector>>, metrics: Metrics, config: DiscordProxyConfig) -> Self {
+  pub fn new(redis: ProxyRedisClient, client: Client<HttpsConnector<HttpConnector>>, metrics: Metrics, config: DiscordProxyConfig) -> Self {
     Self {
       redis: Arc::new(redis),
       client,
@@ -219,7 +220,7 @@ fn generate_ratelimit_response(bucket: &str) -> Response<Body> {
 #[derive(Error, Debug)]
 pub enum ProxyError {
   #[error("Redis Error: {0}")]
-  RedisError(#[from] RedisErrorWrapper),
+  RedisError(#[from] RedisError),
 
   #[error("Error Proxying Request: {0}")]
   RequestError(#[from] hyper::Error),

@@ -1,3 +1,14 @@
+--  Returned ratelimit status can be:
+--  - False/Nil: Ratelimit not found, must be fetched.
+--  - 0: Ratelimit exceeded.
+--  - 1-Infinity: Ratelimit OK, is number of requests in current bucket.
+--  
+--  Takes two Keys: 
+--  - Bot ID
+--  - Global RL Key w/ Time Slice
+-- 
+--  Returns the global ratelimit status.
+--  - global_ratelimit_status
 local id = KEYS[1]
 
 local global_rl_key = KEYS[2]
