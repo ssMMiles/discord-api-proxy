@@ -1,7 +1,7 @@
 use std::{sync::Arc, time::Duration};
 
 use ahash::AHashMap;
-use fred::{pool::RedisPool, prelude::{RedisError, PubsubInterface, LuaInterface, ClientLike}, clients::SubscriberClient,  types::{RedisConfig, ReconnectPolicy, PerformanceConfig, RedisValue}, util::sha1_hash};
+use fred::{pool::RedisPool, prelude::{RedisError, PubsubInterface, LuaInterface, ClientLike}, clients::SubscriberClient,  types::{RedisConfig, ReconnectPolicy, PerformanceConfig, RedisValue, RespVersion}, util::sha1_hash};
 use thiserror::Error;
 use tokio::{sync::{oneshot::{self, error::RecvError}, Mutex, RwLock}, time::sleep, select};
 
@@ -100,6 +100,9 @@ impl ProxyRedisClient {
       server: fred::types::ServerConfig::Centralized { host, port },
       username: user,
       password: pass,
+
+      version: RespVersion::RESP3,
+      
       ..RedisConfig::default()
     };
 
