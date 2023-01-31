@@ -5,14 +5,23 @@ edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[patch.crates-io]
+trust-dns = { git ="https://github.com/bluejekyll/trust-dns" }
+
 [dependencies]
-hyper = { version = "0.14", features = ["client", "server", "http1", "http2", "runtime", "stream"] }
-hyper-tls = "0.5.0"
+tokio = { version = "1", features = ["macros", "net", "time", "rt-multi-thread", "signal"] }
 
-# redis = { version = "0.22.1", features = ["tokio-comp", "connection-manager"] }
-# deadpool-redis = "0.11.0"
+http = "0.2.8"
+hyper = { version = "0.14", features = ["client", "server", "http1", "http2"] }
 
-tokio = { version = "1", features = ["macros", "net", "time", "rt-multi-thread"] }
+hyper-rustls = { version = "0.23", default-features = false, features = ["webpki-tokio", "http1", "http2"] }
+
+trust-dns-resolver = "0.22.0"
+hyper-trust-dns = { version = "0.5", default-features = false }
+
+axum = { version = "0.6.4", features = [] }
+
+fred = { version = "6.0.0-beta.2", features = ["subscriber-client"] }
 
 serde = { version = "1.0.144", features = ["derive"] }
 serde_json = "1.0.85"
@@ -21,11 +30,13 @@ prometheus = "0.13.2"
 
 ctrlc = { version = "3.0", features = ["termination"] }
 
+futures-util = "0.3.25"
+ahash = "0.8.3"
 base64 = "0.13.0"
 rand = "0.8.5"
-thiserror = "1.0.34"
+
 env_logger = "0.9.3"
 log = "0.4.17"
-futures-util = "0.3.25"
-fred = { version = "6.0.0-beta.2", features = ["subscriber-client"] }
-ahash = "0.8.3"
+
+thiserror = "1.0.34"
+

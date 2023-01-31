@@ -5,6 +5,8 @@ use fred::{pool::RedisPool, prelude::{RedisError, PubsubInterface, LuaInterface,
 use thiserror::Error;
 use tokio::{sync::{oneshot::{self, error::RecvError}, Mutex, RwLock}, time::sleep, select};
 
+use crate::config::RedisEnvConfig;
+
 struct StaticProxyScripts {
   pub check_global_and_route_rl: &'static str,
   pub check_global_rl: &'static str,
@@ -95,11 +97,15 @@ pub enum LockError {
 // const PUBSUB_MAX_RECONNECT_TIMEOUT: u64 = 60000;
 
 impl ProxyRedisClient {
-  pub async fn new(host: String, port: u16, user: Option<String>, pass: Option<String>, pool_size: usize) -> Result<Self, RedisError> {
+  pub async fn new(env_config: Arc<RedisEnvConfig>) -> Result<Self, RedisError> {
     let config = RedisConfig {
-      server: fred::types::ServerConfig::Centralized { host, port },
-      username: user,
-      password: pass,
+      server: fred::types::ServerConfig::Centralized { 
+        host: env_config.host.clone(),
+        port: env_config.port
+      },
+
+      username: env_config.username.clone(),
+      password: env_config.password.clone(),
 
       version: RespVersion::RESP3,
       
@@ -109,7 +115,13 @@ impl ProxyRedisClient {
     let policy = ReconnectPolicy::default();
     let perf = PerformanceConfig::default();
 
-    let pool = RedisPool::new(config.clone(), Some(perf.clone()), Some(policy.clone()), pool_size)?;
+    let pool = RedisPool::new(
+      config.clone(), 
+      Some(perf.clone()), 
+      Some(policy.clone()), 
+      env_config.pool_size
+    )?;
+    
     let pubsub_receiver = SubscriberClient::new(config, Some(perf), Some(policy));
 
     let instance = Self {

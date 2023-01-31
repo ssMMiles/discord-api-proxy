@@ -6,7 +6,7 @@ use hyper::HeaderMap;
 use rand::{thread_rng, distributions::Alphanumeric, Rng};
 use tokio::{time::Instant, select};
 
-use crate::{proxy::{DiscordProxy, ProxyError}, buckets::{Resources, RouteInfo}, redis::RedisErrorWrapper, NewBucketStrategy};
+use crate::{proxy::{ProxyError, Proxy}, buckets::{Resources, RouteInfo}, redis::RedisErrorWrapper, config::NewBucketStrategy};
 
 #[derive(PartialEq, Debug)]
 pub enum RatelimitStatus {
@@ -16,8 +16,8 @@ pub enum RatelimitStatus {
   ProxyOverloaded
 }
 
-impl DiscordProxy {
-  pub async fn check_ratelimits(&mut self, id: &str, token: &Option<&str>, route: &RouteInfo, route_bucket: &str) -> Result<RatelimitStatus, ProxyError> {  
+impl Proxy {
+  pub async fn check_ratelimits(&self, id: &str, token: &Option<&str>, route: &RouteInfo, route_bucket: &str) -> Result<RatelimitStatus, ProxyError> {  
     let use_global_rl = match route.resource {
       Resources::Webhooks => false,
       Resources::Interactions => route.route != "interactions/!*/!/callback",
@@ -33,7 +33,7 @@ impl DiscordProxy {
     }
   }
 
-  async fn check_global_and_bucket_ratelimits(&mut self, id: &str, token: &Option<&str>, route_bucket: &str) -> Result<RatelimitStatus, ProxyError> {
+  async fn check_global_and_bucket_ratelimits(&self, id: &str, token: &Option<&str>, route_bucket: &str) -> Result<RatelimitStatus, ProxyError> {
     let epoch = SystemTime::now()
       .duration_since(UNIX_EPOCH)
       .expect("Time went backwards");
@@ -43,6 +43,7 @@ impl DiscordProxy {
     let global_rl_time_slice = epoch.as_millis() / 1000 + (self.config.global_time_slice_offset_ms as u128);
     let global_rl_slice_id = &format!("{}-{}", global_id, global_rl_time_slice);
 
+    let mut retries = 0;
     let status = loop {
       let ratelimit_check_started_at = Instant::now();
 
@@ -67,8 +68,14 @@ impl DiscordProxy {
       let global_ratelimit = ratelimits.0;
       let route_ratelimit = ratelimits.1;
 
-      if ratelimit_check_is_overloaded(route_bucket, ratelimit_check_started_at) {
-        break RatelimitStatus::ProxyOverloaded;
+      let is_overloaded = ratelimit_check_is_overloaded(route_bucket, ratelimit_check_started_at);
+      if is_overloaded {
+        retries += 1;
+
+        if retries == 3 {
+          log::error!("Ratelimit check is overloaded 3 times in a row, returning proxy overloaded.");
+          break RatelimitStatus::ProxyOverloaded;
+        }
       }
 
       let is_global_ratelimited = self.is_global_ratelimited(global_id, token, global_ratelimit);
@@ -105,7 +112,7 @@ impl DiscordProxy {
     Ok(status)
   }
 
-  async fn check_route_ratelimit(&mut self, route_bucket: &str) -> Result<RatelimitStatus, ProxyError> {
+  async fn check_route_ratelimit(&self, route_bucket: &str) -> Result<RatelimitStatus, ProxyError> {
     loop {
       let ratelimit_check_started_at = Instant::now();
 
@@ -146,7 +153,7 @@ impl DiscordProxy {
             log::debug!("[{}] Global ratelimit lock acquired, but request is unauthenticated. Defaulting to 50 requests/s.", &global_id);
           } else {
             log::debug!("[{}] Global ratelimit lock acquired, fetching from Discord.", &global_id);
-            ratelimit = match DiscordProxy::fetch_discord_global_ratelimit(self.client.clone(), token.unwrap()).await {
+            ratelimit = match self.fetch_discord_global_ratelimit(token.unwrap()).await {
               Ok(limit) => {
                 log::debug!("[{}] Global ratelimit fetched from Discord: {}", &global_id, &limit);
                 limit
@@ -166,7 +173,7 @@ impl DiscordProxy {
 
           return Ok(None);
         } else {
-          if self.config.global == NewBucketStrategy::Strict {
+          if self.config.global_rl_strategy == NewBucketStrategy::Strict {
             log::debug!("[{}]  Lock is taken and ratelimit config is Strict, awaiting unlock.", &global_id);
             
             select! {
@@ -214,7 +221,7 @@ impl DiscordProxy {
 
           return Ok(Some(RatelimitStatus::Ok(Some(lock_value))))
         } else {
-          if self.config.buckets == NewBucketStrategy::Strict {
+          if self.config.route_rl_strategy == NewBucketStrategy::Strict {
             log::debug!("[{}]  Lock is taken, awaiting unlock.", &route_bucket);
             
             select! {
@@ -240,7 +247,7 @@ impl DiscordProxy {
     Ok(Some(RatelimitStatus::Ok(None)))
   }
 
-  pub async fn update_ratelimits(&mut self, _global_rl_key: String, headers: &HeaderMap, bucket: String, bucket_lock: Option<String>, _sent_request_at: u128) -> Result<(), RedisErrorWrapper> {
+  pub async fn update_ratelimits(&self, _global_rl_key: String, headers: &HeaderMap, bucket: String, bucket_lock: Option<String>, _sent_request_at: u128) -> Result<(), RedisErrorWrapper> {
     let bucket_limit = match headers.get("X-RateLimit-Limit") {
       Some(limit) => limit.clone().to_str().unwrap().parse::<u16>().unwrap(),
       None => 0
@@ -280,7 +287,7 @@ fn ratelimit_check_is_overloaded(route_bucket: &str, started_at: Instant) -> boo
   let time_taken = started_at.elapsed().as_millis();
 
   if time_taken > 50 {
-    log::error!("[{}] Ratelimit checks took {}ms to respond. Redis or the proxy is overloaded, request aborted.", route_bucket, time_taken);
+    log::warn!("[{}] Ratelimit checks took {}ms to respond. Redis or the proxy is overloaded, retrying.", route_bucket, time_taken);
     return true;
   } else if time_taken > 25 {
     log::warn!("[{}] Ratelimit checks took {}ms to respond. Redis or the proxy is getting overloaded.", route_bucket, time_taken);

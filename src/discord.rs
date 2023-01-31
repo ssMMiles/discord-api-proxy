@@ -1,9 +1,8 @@
-use hyper::{Request, Body, body::Buf, StatusCode, Client, client::HttpConnector};
-use hyper_tls::HttpsConnector;
+use hyper::{Request, Body, body::Buf, StatusCode};
 use serde::Deserialize;
 use thiserror::Error;
 
-use crate::proxy::DiscordProxy;
+use crate::proxy::Proxy;
 
 const DEFAULT: u16 = 50;
 
@@ -27,7 +26,7 @@ struct SessionStartLimit {
 
 #[derive(Error, Debug)]
 pub enum DiscordError {
-  #[error("Discord Error fetching global ratelimit: {0}")]
+  #[error("Non 2xx Status Code fetching Global Ratelimit: {0}")]
   DiscordError(StatusCode),
 
   #[error("HTTP Error fetching global ratelimit: {0}")]
@@ -37,16 +36,19 @@ pub enum DiscordError {
   ParseError(#[from] serde_json::Error)
 }
 
+const GET_GATEWAY_URL: &'static str = "https://discord.com/api/v10/gateway/bot";
 
-impl DiscordProxy {
-  pub async fn fetch_discord_global_ratelimit(client: Client<HttpsConnector<HttpConnector>>, token: &str) -> Result<u16, DiscordError> {
+impl Proxy {
+  pub async fn fetch_discord_global_ratelimit(&self, token: &str) -> Result<u16, DiscordError> {
+    println!("CHECKING DISCORD RL");
+
     let req = Request::builder()
       .method("GET")
-      .uri("https://discord.com/api/v10/gateway/bot")
+      .uri(GET_GATEWAY_URL)
       .header("Authorization", token)
       .body(Body::empty()).unwrap();
 
-    let result = client.request(req).await?;
+    let result = self.http_client.request(req).await?;
 
     if !result.status().is_success() {
       return Err(DiscordError::DiscordError(result.status()));
