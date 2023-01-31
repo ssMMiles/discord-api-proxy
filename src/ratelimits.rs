@@ -47,6 +47,7 @@ impl DiscordProxy {
     let (mut redis_conn_1, mut redis_conn_2): (Connection, Connection) = try_join!(self.redis.pool.get(), self.redis.pool.get())
       .map_err(RedisErrorWrapper::RedisPoolError)?;
 
+    let mut retries = 0;
     let status = loop {
       let ratelimit_check_started_at = Instant::now();
 
@@ -70,8 +71,15 @@ impl DiscordProxy {
       let global_ratelimit = ratelimits.0;
       let route_ratelimit = ratelimits.1;
 
-      if ratelimit_check_is_overloaded(route_bucket, ratelimit_check_started_at) {
-        break RatelimitStatus::ProxyOverloaded;
+      let is_overloaded = ratelimit_check_is_overloaded(route_bucket, ratelimit_check_started_at);
+      if is_overloaded {
+        retries += 1;
+
+        if retries == 3 {
+          log::error!("Ratelimit check is overloaded 3 times in a row, returning proxy overloaded.");
+
+          break RatelimitStatus::ProxyOverloaded;
+        }
       }
 
       let is_global_ratelimited = self.is_global_ratelimited(&mut redis_conn_1, global_id, token, global_ratelimit);
@@ -113,6 +121,7 @@ impl DiscordProxy {
   async fn check_route_ratelimit(&mut self, route_bucket: &str) -> Result<RatelimitStatus, ProxyError> {
     let mut redis_conn = self.redis.pool.get().await.unwrap();
 
+    let mut retries = 0;
     return loop {
       let ratelimit_check_started_at = Instant::now();
 
@@ -120,10 +129,17 @@ impl DiscordProxy {
         .key(route_bucket)
       .invoke_async::<_,Option<u16>>(&mut redis_conn).await.map_err(RedisErrorWrapper::RedisError)?;
 
-      if ratelimit_check_is_overloaded(route_bucket, ratelimit_check_started_at) {
-        break Ok(RatelimitStatus::ProxyOverloaded);
-      }
+      let is_overloaded = ratelimit_check_is_overloaded(route_bucket, ratelimit_check_started_at);
+      if is_overloaded {
+        retries += 1;
 
+        if retries == 3 {
+          log::error!("Ratelimit check is overloaded 3 times in a row, returning proxy overloaded.");
+
+          break Ok(RatelimitStatus::ProxyOverloaded);
+        }
+      }
+      
       match self.is_route_ratelimited(&mut redis_conn, route_bucket, ratelimit).await? {
         Some(status) => {
           log::debug!("[{}] Bucket Ratelimit Status: {:?} - Count: {}", &route_bucket, &status, &ratelimit.unwrap_or(0));
@@ -369,7 +385,7 @@ fn ratelimit_check_is_overloaded(route_bucket: &str, started_at: Instant) -> boo
   let time_taken = started_at.elapsed().as_millis();
 
   if time_taken > 50 {
-    log::error!("[{}] Ratelimit checks took {}ms to respond. Redis or the proxy is overloaded, request aborted.", route_bucket, time_taken);
+    log::warn!("[{}] Ratelimit checks took {}ms to respond. Redis or the proxy is overloaded, request aborted.", route_bucket, time_taken);
     return true;
   } else if time_taken > 25 {
     log::warn!("[{}] Ratelimit checks took {}ms to respond. Redis or the proxy is getting overloaded.", route_bucket, time_taken);
