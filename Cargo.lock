@@ -1677,8 +1677,3 @@ checksum = "80d0f4e272c85def139476380b12f9ac60926689dd2e01d4923222f40580869d"
 dependencies = [
  "winapi",
 ]
-
-[[patch.unused]]
-name = "trust-dns"
-version = "0.22.0"
-source = "git+https://github.com/bluejekyll/trust-dns#0b6fefea3fefe1086fed4df6781550462de51553"

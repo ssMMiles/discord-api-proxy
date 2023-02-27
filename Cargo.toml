@@ -9,9 +9,6 @@ trust-dns = ["dep:trust-dns-resolver", "dep:hyper-trust-dns"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
-[patch.crates-io]
-trust-dns = { git ="https://github.com/bluejekyll/trust-dns" }
-
 [dependencies]
 tokio = { version = "1", features = ["macros", "net", "time", "rt-multi-thread", "signal"] }
 

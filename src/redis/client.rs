@@ -13,7 +13,7 @@ struct StaticProxyScripts {
   pub check_route_rl: &'static str,
 
   // pub expire_global: &'static str,
-  // pub expire_route: &'static str,
+  pub expire_route: &'static str,
 
   pub lock_bucket: &'static str,
 
@@ -27,7 +27,7 @@ static SCRIPTS: StaticProxyScripts = StaticProxyScripts {
   check_route_rl: include_str!("./scripts/check_route_rl.lua"),
 
   // expire_global: include_str!("./scripts/expire_global.lua"),
-  // expire_route: include_str!("./scripts/expire_route.lua"),
+  expire_route: include_str!("./scripts/expire_route.lua"),
 
   lock_bucket: include_str!("./scripts/lock_bucket.lua"),
 
@@ -41,7 +41,7 @@ struct ProxyScriptHashes {
   pub check_route_rl: String,
 
   // pub expire_global: String,
-  // pub expire_route: String,
+  pub expire_route: String,
 
   pub lock_bucket: String,
 
@@ -57,7 +57,7 @@ impl ProxyScriptHashes {
       check_route_rl: sha1_hash(&SCRIPTS.check_route_rl),
 
       // expire_global: sha1_hash(&SCRIPTS.expire_global),
-      // expire_route: sha1_hash(&SCRIPTS.expire_route),
+      expire_route: sha1_hash(&SCRIPTS.expire_route),
 
       lock_bucket: sha1_hash(&SCRIPTS.lock_bucket),
 
@@ -170,7 +170,7 @@ impl ProxyRedisClient {
     self.pool.script_load::<(), &str>(SCRIPTS.check_route_rl).await?;
 
     // self.pool.script_load::<(), &str>(SCRIPTS.expire_global).await?;
-    // self.pool.script_load::<(), &str>(SCRIPTS.expire_route).await?;
+    self.pool.script_load::<(), &str>(SCRIPTS.expire_route).await?;
 
     self.pool.script_load::<(), &str>(SCRIPTS.lock_bucket).await?;
 
@@ -188,8 +188,6 @@ impl ProxyRedisClient {
     let mut message_stream = _self.pubsub_receiver.on_message();
     let message_task = tokio::spawn(async move {
       while let Ok(message) = message_stream.recv().await {
-        println!("Recv {:?} on channel {}", message.value, message.channel);
-
         match message.value {
           RedisValue::String(payload) => {
             log::debug!("Received unlock over PubSub for {}.", &payload);
@@ -398,6 +396,14 @@ impl ProxyRedisClient {
       &self.script_hashes.unlock_route,
       route_rl_key,
       vec!(lock_id, &route_rl.to_string(), reset_at),
+    ).await.map(|r| r.unwrap_or(false))
+  }
+
+  pub async fn expire_route(&self, route_rl_key: &str, reset_at: &str) -> Result<bool, RedisError> {
+    self.pool.evalsha::<Option<bool>, &str, &str, Vec<&str>>(
+      &self.script_hashes.expire_route,
+      route_rl_key,
+      vec!(reset_at),
     ).await.map(|r| r.unwrap_or(false))
   }
 

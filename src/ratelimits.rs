@@ -263,21 +263,29 @@ impl Proxy {
       None => "0".to_string()
     };
 
-    if bucket_lock.is_some() {
-      let redis = self.redis.clone();
-      tokio::task::spawn(async move {
-        log::debug!("[{}] New bucket! Setting ratelimit to {}, resetting at {}", bucket, bucket_limit, reset_at);
+    
+    let redis = self.redis.clone();
+    tokio::task::spawn(async move {
+      log::debug!("[{}] New bucket! Setting ratelimit to {}, resetting at {}", bucket, bucket_limit, reset_at);
 
-        if redis.unlock_route(
+      let result = if bucket_lock.is_some() {
+        redis.unlock_route(
           &bucket, 
           &bucket_lock.unwrap(), 
           bucket_limit, 
           &reset_at
-        ).await.is_err() {
-          log::debug!("[{}] Failed to unlock route, lock may have expired.", bucket);
-        }
-      });
-    }
+        ).await
+      } else {
+        redis.expire_route(
+          &bucket, 
+          &reset_at
+        ).await
+      };
+
+      if result.is_err() {
+        log::debug!("[{}] Failed to unlock route, lock may have expired.", bucket);
+      }
+    });
 
     Ok(())
   }
