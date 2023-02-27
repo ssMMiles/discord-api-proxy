@@ -34,7 +34,7 @@ async fn main() {
   let addr: SocketAddr = format!("{}:{}", config.webserver.host, config.webserver.port).parse().expect("Failed to parse socket address.");
 
   let app = Router::new()
-    .route("/", get(health))
+    .route("/health", get(health))
     .route("/metrics", get(metrics))
     .route_service("/api/*path", proxy_request.with_state(discord_proxy));
 
