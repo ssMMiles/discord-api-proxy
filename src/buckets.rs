@@ -49,6 +49,13 @@ pub fn get_route_info(method: &Method, path: &str) -> RouteInfo {
   let path_segments = path.split("/").skip(3).collect::<Vec<&str>>();
   let mut route = String::new();
 
+  if path_segments.len() == 0 {
+    return RouteInfo {
+      resource: Resources::None,
+      route
+    };
+  }
+
   let major_resource = Resources::from_str(path_segments[0]);
   let major_bucket = match major_resource {
     Resources::Invites => {
