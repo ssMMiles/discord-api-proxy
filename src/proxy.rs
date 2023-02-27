@@ -2,12 +2,14 @@ use std::{time::{SystemTime, UNIX_EPOCH}, str::FromStr, sync::{atomic::{AtomicBo
 use base64::decode;
 use fred::prelude::RedisError;
 use http::header::{CONNECTION, TRANSFER_ENCODING, UPGRADE};
-use hyper::{Body, Response, StatusCode, http::HeaderValue, HeaderMap, Uri, Client, client::HttpConnector};
+use hyper::{Body, Response, StatusCode, http::HeaderValue, HeaderMap, Uri, Client, client::{HttpConnector, connect::dns::GaiResolver}};
 use hyper_rustls::{HttpsConnectorBuilder, HttpsConnector};
-use hyper_trust_dns::TrustDnsResolver;
 use prometheus::{HistogramVec, Registry};
 use thiserror::Error;
 use tokio::time::Instant;
+
+#[cfg(feature = "trust-dns")]
+use hyper_trust_dns::TrustDnsResolver;
 
 use crate::{buckets::{Resources, get_route_info, RouteInfo}, ratelimits::RatelimitStatus, discord::DiscordError, redis::ProxyRedisClient, config::{ProxyEnvConfig, RedisEnvConfig}};
 
@@ -17,12 +19,12 @@ pub struct Metrics {
 }
 
 #[derive(Clone)]
-pub struct Proxy {
+pub struct Proxy<Resolver = GaiResolver> {
   disabled: Arc<AtomicBool>,
   _metrics: Arc<Option<Metrics>>,
 
   pub redis: Arc<ProxyRedisClient>,
-  pub http_client: Client<HttpsConnector<HttpConnector<TrustDnsResolver>>, Body>,
+  pub http_client: Client<HttpsConnector<HttpConnector<Resolver>>, Body>,
 
   pub config: Arc<ProxyEnvConfig>,
 }
@@ -51,8 +53,8 @@ impl Proxy {
       None
     };
 
-    // let mut http_connector: HttpConnector<> = HttpConnector::new();
-    let mut http_connector = TrustDnsResolver::default().into_http_connector();
+    let mut http_connector: HttpConnector<> = HttpConnector::new();
+
     http_connector.enforce_http(false);
 
     let builder = HttpsConnectorBuilder::new()
