@@ -200,16 +200,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ctrlc"
-version = "3.2.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1d91974fbbe88ec1df0c24a4f00f99583667a7e2e6272b2b92d294d81e462173"
-dependencies = [
- "nix",
- "winapi",
-]
-
-[[package]]
 name = "data-encoding"
 version = "2.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -232,7 +222,6 @@ dependencies = [
  "ahash",
  "axum",
  "base64",
- "ctrlc",
  "env_logger 0.9.3",
  "fred",
  "futures-util",
@@ -240,6 +229,7 @@ dependencies = [
  "hyper",
  "hyper-rustls",
  "hyper-trust-dns",
+ "lazy_static",
  "log",
  "prometheus",
  "rand",
@@ -767,18 +757,6 @@ dependencies = [
  "log",
  "wasi",
  "windows-sys",
-]
-
-[[package]]
-name = "nix"
-version = "0.25.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e322c04a9e3440c327fca7b6c8a63e6890a32fa2ad689db972425f07e0d22abb"
-dependencies = [
- "autocfg",
- "bitflags",
- "cfg-if",
- "libc",
 ]
 
 [[package]]

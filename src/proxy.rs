@@ -4,24 +4,25 @@ use fred::prelude::RedisError;
 use http::header::{CONNECTION, TRANSFER_ENCODING, UPGRADE};
 use hyper::{Body, Response, StatusCode, http::HeaderValue, HeaderMap, Uri, Client, client::{HttpConnector, connect::dns::GaiResolver}};
 use hyper_rustls::{HttpsConnectorBuilder, HttpsConnector};
-use prometheus::{HistogramVec, Registry};
 use thiserror::Error;
-use tokio::time::Instant;
+use std::time::Instant;
+
+use crate::{buckets::{Resources, get_route_info, RouteInfo}, ratelimits::RatelimitStatus, discord::DiscordError, redis::ProxyRedisClient, config::{ProxyEnvConfig, RedisEnvConfig}};
 
 #[cfg(feature = "trust-dns")]
 use hyper_trust_dns::TrustDnsResolver;
 
-use crate::{buckets::{Resources, get_route_info, RouteInfo}, ratelimits::RatelimitStatus, discord::DiscordError, redis::ProxyRedisClient, config::{ProxyEnvConfig, RedisEnvConfig}};
+#[cfg(feature = "metrics")]
+use {
+  prometheus::{TextEncoder, Encoder},
+  crate::metrics::{register_metrics, REGISTRY, RESPONSE_TIME_COLLECTOR}
+};
 
-#[derive(Clone)]
-pub struct Metrics {
-  pub requests: HistogramVec,
-}
+const INTERNAL_PROXY_ERROR: &'static str = "Internal Proxy Error";
 
 #[derive(Clone)]
 pub struct Proxy<Resolver = GaiResolver> {
   disabled: Arc<AtomicBool>,
-  _metrics: Arc<Option<Metrics>>,
 
   pub redis: Arc<ProxyRedisClient>,
   pub http_client: Client<HttpsConnector<HttpConnector<Resolver>>, Body>,
@@ -34,24 +35,8 @@ impl Proxy {
     let redis_client = ProxyRedisClient::new(redis_config).await
       .map_err(|err| ProxyError::RedisInitFailed(err))?;
 
-    let metrics = if config.enable_metrics {
-      let prometheus_registry = Arc::new(Registry::new());
-
-      let request_histogram = HistogramVec::new(prometheus::HistogramOpts::new(
-        "request_results",
-        "Results of attempted Discord API requests."
-      ).buckets(
-        vec![0.1, 0.25, 0.5, 1.0, 2.5]),
-        &["bot_id", "method", "route", "status"]).unwrap();
-  
-      prometheus_registry.register(Box::new(request_histogram.clone())).unwrap();
-
-      Some(Metrics {
-        requests: request_histogram.clone()
-      })
-    } else {
-      None
-    };
+    #[cfg(feature = "metrics")]
+    register_metrics();
 
     let mut http_connector: HttpConnector<> = HttpConnector::new();
 
@@ -73,64 +58,36 @@ impl Proxy {
 
       redis: Arc::new(redis_client),
       http_client: Client::builder().build(builder),
-      
-      _metrics: Arc::new(metrics),
+
       config,
     })
   }
-// }
 
-// impl<TrustDnsResolver> Proxy<TrustDnsResolver>{
-//   pub async fn new(config: Arc<ProxyEnvConfig>, redis_config: Arc<RedisEnvConfig>) -> Result<Self, ProxyError> {
-//     let redis_client = ProxyRedisClient::new(redis_config).await
-//       .map_err(|err| ProxyError::RedisInitFailed(err))?;
+  pub fn get_metrics(&self) -> Response<Body> {
+    #[cfg(feature = "metrics")] {
+      let mut buffer = Vec::new();
+      if let Err(e) = TextEncoder::new().encode(&REGISTRY.gather(), &mut buffer) {
+        eprintln!("Metrics could not be encoded: {}", e);
+        return Response::new(Body::from("Internal Server Error"))
+      };
 
-//     let metrics = if config.enable_metrics {
-//       let prometheus_registry = Arc::new(Registry::new());
+      let res = match String::from_utf8(buffer.clone()) {
+          Ok(v) => v,
+          Err(e) => {
+            eprintln!("Metrics buffer could not be converted to string: {}", e);
+            return Response::new(Body::from("Internal Server Error"))
+          }
+      };
+      buffer.clear();
+    
+      return Response::new(Body::from(res))
+    }
 
-//       let request_histogram = HistogramVec::new(prometheus::HistogramOpts::new(
-//         "request_results",
-//         "Results of attempted Discord API requests."
-//       ).buckets(
-//         vec![0.1, 0.25, 0.5, 1.0, 2.5]),
-//         &["bot_id", "method", "route", "status"]).unwrap();
-  
-//       prometheus_registry.register(Box::new(request_histogram.clone())).unwrap();
+    #[cfg(not(feature = "metrics"))]
+    return Response::new(Body::from("Metrics are disabled."))
+  }
 
-//       Some(Metrics {
-//         requests: request_histogram.clone()
-//       })
-//     } else {
-//       None
-//     };
-
-//     let mut http_connector = if config.disable_ipv6 {
-//       HttpConnector::new()
-//     } else {
-      
-//     };
-
-//     http_connector.enforce_http(false);
-
-//     let builder = HttpsConnectorBuilder::new()
-//       .with_webpki_roots()
-//       .https_only()
-//       .enable_http1()
-//       .enable_http2()
-//     .wrap_connector(http_connector);
-
-//     Ok(Self {
-//       disabled: Arc::new(AtomicBool::new(false)),
-
-//       redis: Arc::new(redis_client),
-//       http_client: Client::builder().build(builder),
-      
-//       _metrics: Arc::new(metrics),
-//       config,
-//     })
-//   }
-
-  pub async fn handle_request(&self, mut req: http::Request<Body>) -> Result<Response<Body>, ProxyError> {
+  pub async fn process(&self, req: http::Request<Body>) -> Response<Body> {
     let start = Instant::now();
 
     let method = req.method().clone();
@@ -140,9 +97,7 @@ impl Proxy {
 
     let auth = match parse_headers(req.headers(), &route_info) {
       Ok(auth) => auth,
-      Err(message) => return Ok(
-        Response::builder().status(400).body(message.into()).unwrap()
-      )
+      Err(message) => return Response::builder().status(400).body(message.into()).unwrap()
     };
 
     let (id, token): (&str, Option<&str>) = match &auth {
@@ -152,6 +107,26 @@ impl Proxy {
 
     let route_bucket = format!("{{{}:{}-{}}}", id, method.to_string(), &route_info.route);
 
+    let res = match self.handle_request(req, &route_info, &route_bucket, id, token).await {
+      Ok(response) => response,
+      Err(err) => {
+        log::error!("Internal Server Error: {:?}", err);
+  
+        Response::builder().status(500).body(Body::from(INTERNAL_PROXY_ERROR)).unwrap()
+      }
+    };
+
+    #[cfg(feature = "metrics")]
+    RESPONSE_TIME_COLLECTOR.with_label_values(
+      &[id, &method.to_string(), &route_info.route, res.status().as_str()]
+    ).observe(start.elapsed().as_secs_f64());
+
+    log::debug!("[{}] Proxied request in {}ms. Status Code: {}", &route_bucket, start.elapsed().as_millis(), res.status());
+
+    return res;
+  }
+
+  pub async fn handle_request(&self, mut req: http::Request<Body>, route_info: &RouteInfo, route_bucket: &str, id: &str, token: Option<&str>) -> Result<Response<Body>, ProxyError> {
     let ratelimit_status = self.check_ratelimits(id, &token, &route_info, &route_bucket).await?;
 
     match ratelimit_status {
@@ -222,14 +197,6 @@ impl Proxy {
         log::warn!("Discord returned non 200 status code {}!", status.as_u16());
       }
     }
-
-    if self.config.enable_metrics {
-      // self.metrics.requests.with_label_values(
-      //   &[id, &method.to_string(), &path, status.as_str()]
-      // ).observe(start.elapsed().as_secs_f64());
-    }
-
-    log::debug!("[{}] Proxied request in {}ms. Status Code: {}", &route_bucket, start.elapsed().as_millis(), result.status());
 
     Ok(result)
   }

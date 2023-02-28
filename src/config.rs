@@ -54,7 +54,6 @@ pub struct ProxyEnvConfig {
   pub lock_timeout: Duration,
   pub ratelimit_timeout: Duration,
 
-  pub enable_metrics: bool,
   pub disable_http2: bool,
   pub clustered_redis: bool
 }
@@ -145,7 +144,6 @@ impl AppEnvConfig {
 
     let global_time_slice_offset_ms = get_and_parse_envvar::<u64>("GLOBAL_TIME_SLICE_OFFSET", 200);
 
-    let enable_metrics = get_and_parse_envvar::<bool>("ENABLE_METRICS", true);
     let disable_http2 = get_and_parse_envvar::<bool>("DISABLE_HTTP2", true);
 
     let host = get_envvar_with_default("HOST", "127.0.0.1".to_string());
@@ -178,7 +176,6 @@ impl AppEnvConfig {
         lock_timeout: Duration::from_millis(lock_wait_timeout),
         ratelimit_timeout: Duration::from_millis(ratelimit_timeout),
 
-        enable_metrics,
         disable_http2,
 
         clustered_redis

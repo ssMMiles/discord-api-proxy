@@ -29,7 +29,6 @@ Name | Description
 `REDIS_USER` | The host of the Redis server. Defaults to an empty string, is only available on Redis 6+`.
 `REDIS_PASS` | The host of the Redis server. If unset, auth is disabled.
 `REDIS_POOL_SIZE` | The size of the Redis connection pool. Defaults to `64`. Note: At least one connection is always reserved for PubSub.
-`ENABLE_METRICS` | Whether to expose Prometheus metrics on `/metrics`. Defaults to `true`.
 `LOCK_WAIT_TIMEOUT` | Duration (in ms) a request should wait for a lock to be released before retrying. Defaults to `500`.
 `RATELIMIT_ABORT_PERIOD` | If the proxy does ever hit a 429, the duration (in ms) it should abort all incoming requests with a 503 for. Defaults to `1000`.
 `GLOBAL_TIME_SLICE_OFFSET` | The offset (in ms) to add to the global ratelimit's 1s fixed window. You probably don't want to mess with this unless you're somehow hitting 429s. Defaults to `200`.

@@ -4,7 +4,8 @@ version = "1.0.1"
 edition = "2021"
 
 [features]
-default = []
+default = ["metrics"]
+metrics = ["dep:prometheus", "dep:lazy_static"]
 trust-dns = ["dep:trust-dns-resolver", "dep:hyper-trust-dns"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -13,7 +14,7 @@ trust-dns = ["dep:trust-dns-resolver", "dep:hyper-trust-dns"]
 tokio = { version = "1", features = ["macros", "net", "time", "rt-multi-thread", "signal"] }
 
 http = "0.2.8"
-hyper = { version = "0.14", features = ["client", "server", "http1", "http2"] }
+hyper = { version = "0.14", features = ["client", "http1", "http2"] }
 
 hyper-rustls = { version = "0.23", default-features = false, features = ["webpki-tokio", "http1", "http2"] }
 
@@ -27,9 +28,7 @@ fred = { version = "6.0.0-beta.2", features = ["subscriber-client"] }
 serde = { version = "1.0.144", features = ["derive"] }
 serde_json = "1.0.85"
 
-prometheus = "0.13.2"
-
-ctrlc = { version = "3.0", features = ["termination"] }
+prometheus = { version = "0.13.2", optional = true }
 
 futures-util = "0.3.25"
 ahash = "0.8.3"
@@ -40,4 +39,5 @@ env_logger = "0.9.3"
 log = "0.4.17"
 
 thiserror = "1.0.34"
+lazy_static = { version = "1.4.0", optional = true }
 
