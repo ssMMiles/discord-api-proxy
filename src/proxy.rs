@@ -1,13 +1,13 @@
 use std::{time::{SystemTime, UNIX_EPOCH}, str::FromStr, sync::{atomic::{AtomicBool, Ordering}, Arc}};
 use base64::decode;
 use fred::prelude::RedisError;
-use http::header::{CONNECTION, TRANSFER_ENCODING, UPGRADE};
+use http::{header::{CONNECTION, TRANSFER_ENCODING, UPGRADE}, Method};
 use hyper::{Body, Response, StatusCode, http::HeaderValue, HeaderMap, Uri, Client, client::{HttpConnector, connect::dns::GaiResolver}};
 use hyper_rustls::{HttpsConnectorBuilder, HttpsConnector};
 use thiserror::Error;
 use std::time::Instant;
 
-use crate::{buckets::{Resources, get_route_info, RouteInfo}, ratelimits::RatelimitStatus, discord::DiscordError, redis::ProxyRedisClient, config::{ProxyEnvConfig, RedisEnvConfig}};
+use crate::{buckets::{Resources, get_route_info, RouteInfo}, ratelimits::RatelimitStatus, discord::DiscordError, redis::ProxyRedisClient, config::{ProxyEnvConfig, RedisEnvConfig}, metrics::{PROXY_ERROR_COLLECTOR, PROXY_OVERLOAD_COLLECTOR, SHARED_429_COLLECTOR, GLOBAL_429_COLLECTOR, ROUTE_429_COLLECTOR, PROXY_GLOBAL_429_COLLECTOR, PROXY_ROUTE_429_COLLECTOR}};
 
 #[cfg(feature = "trust-dns")]
 use hyper_trust_dns::TrustDnsResolver;
@@ -107,36 +107,50 @@ impl Proxy {
 
     let route_bucket = format!("{{{}:{}-{}}}", id, method.to_string(), &route_info.route);
 
-    let res = match self.handle_request(req, &route_info, &route_bucket, id, token).await {
-      Ok(response) => response,
+    let res = match self.handle_request(req, &route_info, &route_bucket, id, token, &method).await {
+      Ok(response) => {
+        #[cfg(feature = "metrics")]
+        RESPONSE_TIME_COLLECTOR.with_label_values(
+          &[id, &method.to_string(), &route_info.route, response.status().as_str()]
+        ).observe(start.elapsed().as_secs_f64());
+
+        response
+      },
       Err(err) => {
+        #[cfg(feature = "metrics")]
+        PROXY_ERROR_COLLECTOR.with_label_values(&[id, &method.to_string(), &route_info.route]).inc();
+
         log::error!("Internal Server Error: {:?}", err);
-  
+
         Response::builder().status(500).body(Body::from(INTERNAL_PROXY_ERROR)).unwrap()
       }
     };
-
-    #[cfg(feature = "metrics")]
-    RESPONSE_TIME_COLLECTOR.with_label_values(
-      &[id, &method.to_string(), &route_info.route, res.status().as_str()]
-    ).observe(start.elapsed().as_secs_f64());
 
     log::debug!("[{}] Proxied request in {}ms. Status Code: {}", &route_bucket, start.elapsed().as_millis(), res.status());
 
     return res;
   }
 
-  pub async fn handle_request(&self, mut req: http::Request<Body>, route_info: &RouteInfo, route_bucket: &str, id: &str, token: Option<&str>) -> Result<Response<Body>, ProxyError> {
+  pub async fn handle_request(&self, mut req: http::Request<Body>, route_info: &RouteInfo, route_bucket: &str, id: &str, token: Option<&str>, method: &Method) -> Result<Response<Body>, ProxyError> {
     let ratelimit_status = self.check_ratelimits(id, &token, &route_info, &route_bucket).await?;
 
     match ratelimit_status {
       RatelimitStatus::GlobalRatelimited => {
+        #[cfg(feature = "metrics")]
+        PROXY_GLOBAL_429_COLLECTOR.with_label_values(&[id, &method.to_string(), &route_info.route]).inc();
+
         return Ok(generate_ratelimit_response(id));
       },
       RatelimitStatus::RouteRatelimited => {
+        #[cfg(feature = "metrics")]
+        PROXY_ROUTE_429_COLLECTOR.with_label_values(&[id, &method.to_string(), &route_info.route]).inc();
+
         return Ok(generate_ratelimit_response(&route_info.route));
       },
       RatelimitStatus::ProxyOverloaded => {
+        #[cfg(feature = "metrics")]
+        PROXY_OVERLOAD_COLLECTOR.with_label_values(&[id, &method.to_string(), &route_info.route]).inc();
+
         return Ok(Response::builder().status(503)
           .header("x-sent-by-proxy", "true")
           .body("Proxy Overloaded".into()).unwrap());
@@ -184,9 +198,22 @@ impl Proxy {
         let is_shared_ratelimit = result.headers().get("X-RateLimit-Scope").map(|v| v == "shared").unwrap_or(false);
         
         if is_shared_ratelimit {
-          log::info!("Discord returned Shared 429!");
+          #[cfg(feature = "metrics")]
+          SHARED_429_COLLECTOR.with_label_values(&[id, &method.to_string(), &route_info.route]).inc();
+
+          log::debug!("Discord returned Shared 429!");
         } else {
-          log::error!("Discord returned 429! Global: {:?} Scope: {:?} - ABORTING REQUESTS FOR {}ms!", result.headers().get("X-RateLimit-Global"), result.headers().get("X-RateLimit-Scope"), self.config.ratelimit_timeout.as_millis());
+          let is_global = result.headers().get("X-RateLimit-Global").map(|v| v == "true").unwrap_or(false);
+          
+          #[cfg(feature = "metrics")] {
+            if is_global {
+              GLOBAL_429_COLLECTOR.with_label_values(&[id]).inc();
+            } else {
+              ROUTE_429_COLLECTOR.with_label_values(&[id, &method.to_string(), &route_info.route]).inc();
+            }
+          }
+
+          log::error!("Discord returned 429! Global: {:?} Scope: {:?} - ABORTING REQUESTS FOR {}ms!", is_global, result.headers().get("X-RateLimit-Scope"), self.config.ratelimit_timeout.as_millis());
         
           self.disabled.store(true, Ordering::Release);
           tokio::time::sleep(self.config.ratelimit_timeout).await;
