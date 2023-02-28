@@ -72,6 +72,14 @@ lazy_static! {
     ),
     &["id", "method", "route", "status"]
   ).expect("Failed to create metrics collector.");
+
+  pub static ref PROXY_REQUESTS: CounterVec = CounterVec::new(
+    Opts::new(
+      "requests_proxy",
+      "Number of requests for which the proxy encountered an unexpected error."
+    ),
+    &["id"]
+  ).expect("Failed to create metrics collector.");
 }
 
 pub fn register_metrics() {
@@ -105,5 +113,9 @@ pub fn register_metrics() {
 
   REGISTRY
     .register(Box::new(PROXY_ERROR_COLLECTOR.clone()))
+    .expect("Failed to register metrics collector.");
+
+  REGISTRY
+    .register(Box::new(PROXY_REQUESTS.clone()))
     .expect("Failed to register metrics collector.");
 }

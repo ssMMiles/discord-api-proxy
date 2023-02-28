@@ -7,7 +7,7 @@ use hyper_rustls::{HttpsConnectorBuilder, HttpsConnector};
 use thiserror::Error;
 use std::time::Instant;
 
-use crate::{buckets::{Resources, get_route_info, RouteInfo}, ratelimits::RatelimitStatus, discord::DiscordError, redis::ProxyRedisClient, config::{ProxyEnvConfig, RedisEnvConfig}, metrics::{PROXY_ERROR_COLLECTOR, PROXY_OVERLOAD_COLLECTOR, SHARED_429_COLLECTOR, GLOBAL_429_COLLECTOR, ROUTE_429_COLLECTOR, PROXY_GLOBAL_429_COLLECTOR, PROXY_ROUTE_429_COLLECTOR}};
+use crate::{buckets::{Resources, get_route_info, RouteInfo}, ratelimits::RatelimitStatus, discord::DiscordError, redis::ProxyRedisClient, config::{ProxyEnvConfig, RedisEnvConfig}, metrics::{PROXY_ERROR_COLLECTOR, PROXY_OVERLOAD_COLLECTOR, SHARED_429_COLLECTOR, GLOBAL_429_COLLECTOR, ROUTE_429_COLLECTOR, PROXY_GLOBAL_429_COLLECTOR, PROXY_ROUTE_429_COLLECTOR, PROXY_REQUESTS}};
 
 #[cfg(feature = "trust-dns")]
 use hyper_trust_dns::TrustDnsResolver;
@@ -109,10 +109,13 @@ impl Proxy {
 
     let res = match self.handle_request(req, &route_info, &route_bucket, id, token, &method).await {
       Ok(response) => {
-        #[cfg(feature = "metrics")]
-        RESPONSE_TIME_COLLECTOR.with_label_values(
-          &[id, &method.to_string(), &route_info.route, response.status().as_str()]
-        ).observe(start.elapsed().as_secs_f64());
+        #[cfg(feature = "metrics")] {
+          RESPONSE_TIME_COLLECTOR.with_label_values(
+            &[id, &method.to_string(), &route_info.route, response.status().as_str()]
+          ).observe(start.elapsed().as_secs_f64());
+
+          PROXY_REQUESTS.with_label_values(&[id]).inc();
+        }
 
         response
       },
