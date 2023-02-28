@@ -76,6 +76,34 @@ lazy_static! {
 
 pub fn register_metrics() {
   REGISTRY
-      .register(Box::new(RESPONSE_TIME_COLLECTOR.clone()))
-      .expect("Failed to register metrics collector.");
+    .register(Box::new(RESPONSE_TIME_COLLECTOR.clone()))
+    .expect("Failed to register metrics collector.");
+
+  REGISTRY
+    .register(Box::new(SHARED_429_COLLECTOR.clone()))
+    .expect("Failed to register metrics collector.");
+
+  REGISTRY  
+    .register(Box::new(ROUTE_429_COLLECTOR.clone()))
+    .expect("Failed to register metrics collector.");
+
+  REGISTRY
+    .register(Box::new(GLOBAL_429_COLLECTOR.clone()))
+    .expect("Failed to register metrics collector.");
+
+  REGISTRY
+    .register(Box::new(PROXY_ROUTE_429_COLLECTOR.clone()))
+    .expect("Failed to register metrics collector.");
+
+  REGISTRY
+    .register(Box::new(PROXY_GLOBAL_429_COLLECTOR.clone()))
+    .expect("Failed to register metrics collector.");
+
+  REGISTRY
+    .register(Box::new(PROXY_OVERLOAD_COLLECTOR.clone()))
+    .expect("Failed to register metrics collector.");
+
+  REGISTRY
+    .register(Box::new(PROXY_ERROR_COLLECTOR.clone()))
+    .expect("Failed to register metrics collector.");
 }
