@@ -1,5 +1,5 @@
 use prometheus::{
-  HistogramOpts, HistogramVec, Registry, Counter, CounterVec, Opts,
+  HistogramOpts, HistogramVec, Registry, CounterVec, Opts,
 };
 
 use lazy_static::lazy_static;

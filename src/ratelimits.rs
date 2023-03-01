@@ -297,8 +297,9 @@ fn ratelimit_check_is_overloaded(route_bucket: &str, started_at: Instant) -> boo
   if time_taken > 50 {
     log::warn!("[{}] Ratelimit checks took {}ms to respond. Redis or the proxy is overloaded, retrying.", route_bucket, time_taken);
     return true;
+    
   } else if time_taken > 25 {
-    log::warn!("[{}] Ratelimit checks took {}ms to respond. Redis or the proxy is getting overloaded.", route_bucket, time_taken);
+    log::debug!("[{}] Ratelimit checks took {}ms to respond. Redis or the proxy is getting overloaded.", route_bucket, time_taken);
   } else {
     log::debug!("[{}] Redis took {}ms to respond.", route_bucket, time_taken);
   }
