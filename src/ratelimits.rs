@@ -47,7 +47,6 @@ impl Proxy {
     let status = loop {
       let ratelimit_check_started_at = Instant::now();
 
-
       let ratelimits: (Option<u16>, Option<u16>) = if self.config.clustered_redis {
         let check_global_rl = self.redis.check_global_rl(global_id, global_rl_slice_id);
         let check_route_rl = self.redis.check_route_rl(route_bucket);

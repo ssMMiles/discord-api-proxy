@@ -9,7 +9,11 @@ pub struct RedisEnvConfig {
 
   pub pool_size: usize,
 
+  pub sentinel: bool,
   pub clustered: bool,
+
+  pub sentinel_auth: bool,
+  pub sentinel_master: String
 }
 
 pub struct WebserverEnvConfig {
@@ -126,15 +130,29 @@ pub struct AppEnvConfig {
 
 impl AppEnvConfig {
   pub fn from_env() -> Self {
+    let sentinel_redis = get_and_parse_envvar::<bool>("REDIS_SENTINEL", false);
+    let clustered_redis = get_and_parse_envvar::<bool>("REDIS_CLUSTER", false);
+
+    if sentinel_redis && clustered_redis {
+      panic!("Cannot use both Redis Sentinel and Redis Cluster at the same time.");
+    }
+
+    let sentinel_auth = get_and_parse_envvar::<bool>("REDIS_SENTINEL_AUTH", false);
+    let sentinel_master = get_envvar_with_default("REDIS_SENTINEL_MASTER", "mymaster".to_owned());
+
+    let default_redis_port = if sentinel_redis {
+      26379
+    } else {
+      6379
+    };
+
     let redis_host = get_envvar_with_default("REDIS_HOST", "127.0.0.1".to_string());
-    let redis_port = get_and_parse_envvar::<u16>("REDIS_PORT", 6379);
+    let redis_port = get_and_parse_envvar::<u16>("REDIS_PORT", default_redis_port);
 
     let redis_user = get_optional_envvar("REDIS_USER");
     let redis_pass = get_optional_envvar("REDIS_PASS");
 
     let redis_pool_size = get_and_parse_envvar::<usize>("REDIS_POOL_SIZE", 128);
-
-    let clustered_redis = get_and_parse_envvar::<bool>("REDIS_CLUSTER", false);
 
     let lock_wait_timeout = get_and_parse_envvar::<u64>("LOCK_WAIT_TIMEOUT", 500);
     let ratelimit_timeout = get_and_parse_envvar::<u64>("RATELIMIT_ABORT_PERIOD", 1000);
@@ -159,7 +177,11 @@ impl AppEnvConfig {
 
         pool_size: redis_pool_size,
 
+        sentinel: sentinel_redis,
         clustered: clustered_redis,
+
+        sentinel_auth,
+        sentinel_master
       }),
  
       webserver: Arc::new(WebserverEnvConfig {
