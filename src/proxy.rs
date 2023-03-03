@@ -224,7 +224,11 @@ impl Proxy {
         }
       },
       _ => {
-        log::warn!("Discord returned non 200 status code {}!", status.as_u16());
+        let code = status.as_u16();
+        
+        if code < 400 && code > 499 {
+          log::warn!("Discord returned unexpected code {} for {} {}", code, method, route_info.route);
+        }
       }
     }
 
