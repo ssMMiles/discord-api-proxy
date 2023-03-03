@@ -70,7 +70,7 @@ lazy_static! {
       "requests_proxy_error",
       "Number of requests for which the proxy encountered an unexpected error."
     ),
-    &["id", "method", "route", "status"]
+    &["id", "method", "route"]
   ).expect("Failed to create metrics collector.");
 
   pub static ref PROXY_REQUESTS: CounterVec = CounterVec::new(
