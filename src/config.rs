@@ -162,7 +162,7 @@ impl AppEnvConfig {
 
     let global_time_slice_offset_ms = get_and_parse_envvar::<u64>("GLOBAL_TIME_SLICE_OFFSET", 200);
 
-    let disable_http2 = get_and_parse_envvar::<bool>("DISABLE_HTTP2", true);
+    let disable_http2 = get_and_parse_envvar::<bool>("DISABLE_HTTP2", false);
 
     let host = get_envvar_with_default("HOST", "127.0.0.1".to_string());
     let port = get_and_parse_envvar::<u16>("PORT", 8080);

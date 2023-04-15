@@ -24,6 +24,7 @@ Name | Description
 --- | ---
 `HOST` | The host to listen on. Defaults to `127.0.0.1`.
 `PORT` | The port to listen on. Defaults to `8080`.
+`DISABLE_HTTP2` | Whether to disable HTTP/2 support. Defaults to `false`.
 `REDIS_HOST` | The host of the Redis server. Defaults to `127.0.0.1`.
 `REDIS_PORT` | The port of the Redis server. Defaults to `6379`.
 `REDIS_USER` | The host of the Redis server. Defaults to an empty string, is only available on Redis 6+`.
