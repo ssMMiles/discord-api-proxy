@@ -1,7 +1,7 @@
 use std::{sync::Arc, time::Duration};
 
 use ahash::AHashMap;
-use fred::{pool::RedisPool, prelude::{RedisError, PubsubInterface, LuaInterface, ClientLike}, clients::SubscriberClient,  types::{RedisConfig, ReconnectPolicy, PerformanceConfig, RedisValue, RespVersion, ServerConfig}, util::sha1_hash};
+use fred::{pool::RedisPool, prelude::{RedisError, PubsubInterface, LuaInterface, ClientLike}, clients::SubscriberClient,  types::{RedisConfig, ReconnectPolicy, PerformanceConfig, RedisValue, RespVersion, ServerConfig, Server}, util::sha1_hash};
 use thiserror::Error;
 use tokio::{sync::{oneshot::{self, error::RecvError}, Mutex, RwLock}, time::sleep, select};
 
@@ -106,7 +106,11 @@ impl ProxyRedisClient {
       };
 
       ServerConfig::Sentinel {
-        hosts: vec![(env_config.host.clone(), env_config.port)],
+        hosts: vec![Server {
+          host: env_config.host.clone().into(),
+          port: env_config.port,
+          tls_server_name: None,
+        }],
         service_name: env_config.sentinel_master.clone(),
 
         username: sentinel_user,
@@ -114,8 +118,11 @@ impl ProxyRedisClient {
       }
     } else {
       ServerConfig::Centralized { 
-        host: env_config.host.clone(),
-        port: env_config.port,
+        server: Server {
+          host: env_config.host.clone().into(),
+          port: env_config.port,
+          tls_server_name: None,
+        }
       }
     };
     
