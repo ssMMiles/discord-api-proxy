@@ -20,9 +20,12 @@ impl Proxy {
   pub async fn check_ratelimits(&self, id: &str, token: &Option<&str>, route: &RouteInfo, route_bucket: &str) -> Result<RatelimitStatus, ProxyError> {  
     let use_global_rl = match route.resource {
       Resources::Webhooks => false,
-      Resources::Interactions => route.route != "interactions/!*/!/callback",
       _ => true
     };
+
+    if route.resource == Resources::Interactions {
+      return Ok(RatelimitStatus::Ok(None));
+    }
     
     log::debug!("[{}] Using Global Ratelimit : {}", route_bucket, use_global_rl);
 
@@ -59,11 +62,6 @@ impl Proxy {
         self.redis.check_global_and_route_rl(global_id, global_rl_slice_id, route_bucket).await?
       };
       
-      // let ratelimits = try_join!(
-      //   check_global_rl,
-      //   check_route_rl
-      // ).expect("Failed to check global or route bucket.");
-
       let global_ratelimit = ratelimits.0;
       let route_ratelimit = ratelimits.1;
 
