@@ -1,5 +1,5 @@
 use std::time::{SystemTime, UNIX_EPOCH};
-use base64_simd::{forgiving_decode_to_vec, FromBase64Encode};
+use base64_simd::forgiving_decode_to_vec;
 use hyper::Method;
 
 #[derive(Debug, PartialEq)]
@@ -58,12 +58,12 @@ impl RouteInfo {
   }
 
   pub fn append(&mut self, segment: &str) {
-    self.route.push_str(&format!("/{}", segment));
-    self.display_route.push_str(&format!("/{}", segment));
+    self.route.push_str(segment);
+    self.display_route.push_str(segment);
   }
 
   pub fn append_hidden(&mut self, segment: &str, replacement: Option<&str>) {
-    self.route.push_str(&format!("/{}", segment));
+    self.route.push_str(segment);
     self.display_route.push_str(replacement.unwrap_or("/!*"));
   }
 }
@@ -159,7 +159,7 @@ pub fn get_route_info(method: &Method, path: &str) -> RouteInfo {
       let interaction_id = is_interaction_webhook(segment);
 
       if interaction_id.is_some() {
-        route_info.append_hidden(&format!("/{}", interaction_id.unwrap()), Some("/!interaction"));
+        route_info.append_hidden(&format!("{}", interaction_id.unwrap()), Some("/!interaction"));
       } else {
         route_info.append("/!");
       }
