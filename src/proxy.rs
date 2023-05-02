@@ -111,7 +111,7 @@ impl Proxy {
       Ok(response) => {
         #[cfg(feature = "metrics")] {
           RESPONSE_TIME_COLLECTOR.with_label_values(
-            &[id, &method.to_string(), &route_info.route, response.status().as_str()]
+            &[id, &method.to_string(), &route_info.display_route, response.status().as_str()]
           ).observe(start.elapsed().as_secs_f64());
 
           PROXY_REQUESTS.with_label_values(&[id]).inc();
@@ -121,7 +121,7 @@ impl Proxy {
       },
       Err(err) => {
         #[cfg(feature = "metrics")]
-        PROXY_ERROR_COLLECTOR.with_label_values(&[id, &method.to_string(), &route_info.route]).inc();
+        PROXY_ERROR_COLLECTOR.with_label_values(&[id, &method.to_string(), &route_info.display_route]).inc();
 
         log::error!("Internal Server Error: {:?}", err);
 
@@ -140,19 +140,19 @@ impl Proxy {
     match ratelimit_status {
       RatelimitStatus::GlobalRatelimited => {
         #[cfg(feature = "metrics")]
-        PROXY_GLOBAL_429_COLLECTOR.with_label_values(&[id, &method.to_string(), &route_info.route]).inc();
+        PROXY_GLOBAL_429_COLLECTOR.with_label_values(&[id, &method.to_string(), &route_info.display_route]).inc();
 
         return Ok(generate_ratelimit_response(id));
       },
       RatelimitStatus::RouteRatelimited => {
         #[cfg(feature = "metrics")]
-        PROXY_ROUTE_429_COLLECTOR.with_label_values(&[id, &method.to_string(), &route_info.route]).inc();
+        PROXY_ROUTE_429_COLLECTOR.with_label_values(&[id, &method.to_string(), &route_info.display_route]).inc();
 
         return Ok(generate_ratelimit_response(&route_info.route));
       },
       RatelimitStatus::ProxyOverloaded => {
         #[cfg(feature = "metrics")]
-        PROXY_OVERLOAD_COLLECTOR.with_label_values(&[id, &method.to_string(), &route_info.route]).inc();
+        PROXY_OVERLOAD_COLLECTOR.with_label_values(&[id, &method.to_string(), &route_info.display_route]).inc();
 
         return Ok(Response::builder().status(503)
           .header("x-sent-by-proxy", "true")
@@ -202,7 +202,7 @@ impl Proxy {
         
         if is_shared_ratelimit {
           #[cfg(feature = "metrics")]
-          SHARED_429_COLLECTOR.with_label_values(&[id, &method.to_string(), &route_info.route]).inc();
+          SHARED_429_COLLECTOR.with_label_values(&[id, &method.to_string(), &route_info.display_route]).inc();
 
           log::debug!("Discord returned Shared 429!");
         } else {
@@ -212,7 +212,7 @@ impl Proxy {
             if is_global {
               GLOBAL_429_COLLECTOR.with_label_values(&[id]).inc();
             } else {
-              ROUTE_429_COLLECTOR.with_label_values(&[id, &method.to_string(), &route_info.route]).inc();
+              ROUTE_429_COLLECTOR.with_label_values(&[id, &method.to_string(), &route_info.display_route]).inc();
             }
           }
 
