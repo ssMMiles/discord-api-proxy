@@ -1,5 +1,5 @@
 use std::{time::{SystemTime, UNIX_EPOCH}, str::FromStr, sync::{atomic::{AtomicBool, Ordering}, Arc}};
-use base64::decode;
+use base64_simd::{forgiving_decode, forgiving_decode_inplace, forgiving_decode_to_vec};
 use fred::prelude::RedisError;
 use http::{header::{CONNECTION, TRANSFER_ENCODING, UPGRADE}, Method};
 use hyper::{Body, Response, StatusCode, http::HeaderValue, HeaderMap, Uri, Client, client::{HttpConnector, connect::dns::GaiResolver}};
@@ -263,12 +263,12 @@ fn parse_headers(headers: &HeaderMap, route_info: &RouteInfo) -> Result<Option<(
   };
 
   let base64_bot_id = match token[4..].split('.').nth(0) {
-    Some(base64_bot_id) => base64_bot_id,
+    Some(base64_bot_id) => base64_bot_id.as_bytes(),
     None => return Err("Invalid Authorization header".to_string())
   };
 
   let bot_id = String::from_utf8(
-    decode(base64_bot_id)
+    forgiving_decode_to_vec(base64_bot_id)
     .map_err(|_| "Invalid Authorization header".to_string())?
   ).map_err(|_| "Invalid Authorization header".to_string())?;
 
