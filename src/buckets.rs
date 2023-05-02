@@ -97,10 +97,19 @@ pub fn get_route_info(method: &Method, path: &str) -> RouteInfo {
       }
 
       if path_segments.len() >= 2 {
-        format!("{}/{}", path_segments[0], path_segments[1])
+        format!("guilds/{}", path_segments[1])
       } else {
-        path_segments[0].to_string()
+        "guilds".to_string()
       }
+    },
+    Resources::Interactions => {
+      if path_segments.len() == 4 && path_segments[2] == "callback" {
+        route_info.append(&format!("interactions/{}/!/callback", path_segments[1]));
+
+        return route_info;
+      }
+
+      format!("interactions/{}", path_segments[1])
     },
     _ => {
       if path_segments.len() >= 2 {
@@ -156,7 +165,10 @@ pub fn get_route_info(method: &Method, path: &str) -> RouteInfo {
     }
 
     if segment.len() >= 64 {
-      let interaction_id = is_interaction_webhook(segment);
+      let interaction_id = match route_info.resource {
+        Resources::Webhooks => is_interaction_webhook(segment),
+        _ => None
+      };
 
       if interaction_id.is_some() {
         route_info.append_hidden(&format!("{}", interaction_id.unwrap()), Some("/!interaction"));
