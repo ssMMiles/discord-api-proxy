@@ -1,5 +1,5 @@
 use std::time::{SystemTime, UNIX_EPOCH};
-use base64_simd::forgiving_decode_to_vec;
+use base64_simd::{forgiving_decode_to_vec, FromBase64Encode};
 use hyper::Method;
 
 #[derive(Debug, PartialEq)]
@@ -187,7 +187,7 @@ fn get_snowflake_age_ms(snowflake: u64) -> u64 {
 }
 
 fn is_interaction_webhook(token: &str) -> Option<String> {
-  if token.starts_with("aW50ZXJhY3Rpb246") {
+  if !token.starts_with("aW50ZXJhY3Rpb246") {
     return None;
   }
 
