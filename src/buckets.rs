@@ -171,7 +171,7 @@ pub fn get_route_info(method: &Method, path: &str) -> RouteInfo {
       };
 
       if interaction_id.is_some() {
-        route_info.append_hidden(&format!("{}", interaction_id.unwrap()), Some("/!interaction"));
+        route_info.append_hidden(&format!("/{}", interaction_id.unwrap()), Some("/!interaction"));
       } else {
         route_info.append("/!");
       }
