@@ -5,13 +5,13 @@ use hyper::Body;
 use crate::proxy::Proxy;
 
 pub async fn health() -> &'static str {
-  "OK"
+    "OK"
 }
 
 pub async fn proxy_request(State(proxy): State<Proxy>, req: Request<Body>) -> Response<Body> {
-  proxy.process(req).await
+    proxy.process(req).await
 }
 
 pub async fn metrics(State(proxy): State<Proxy>) -> Response<Body> {
-  return proxy.get_metrics();
+    return proxy.get_metrics();
 }
