@@ -87,9 +87,7 @@ impl Proxy {
             let global_ratelimit = ratelimits.0;
             let route_ratelimit = ratelimits.1;
 
-            let is_overloaded =
-                ratelimit_check_is_overloaded(route_bucket, ratelimit_check_started_at);
-            if is_overloaded {
+            if ratelimit_check_is_overloaded(route_bucket, ratelimit_check_started_at) {
                 retries += 1;
 
                 if retries == 3 {
@@ -134,13 +132,19 @@ impl Proxy {
         &self,
         route_bucket: &str,
     ) -> Result<RatelimitStatus, ProxyError> {
-        loop {
+        let mut retries = 0;
+        let status = loop {
             let ratelimit_check_started_at = Instant::now();
 
             let ratelimit = self.redis.check_route_rl(route_bucket).await?;
 
             if ratelimit_check_is_overloaded(route_bucket, ratelimit_check_started_at) {
-                break Ok(RatelimitStatus::ProxyOverloaded);
+                retries += 1;
+
+                if retries == 3 {
+                    log::error!("Ratelimit check is overloaded 3 times in a row, returning proxy overloaded.");
+                    break RatelimitStatus::ProxyOverloaded;
+                }
             }
 
             match self.is_route_ratelimited(route_bucket, ratelimit).await? {
@@ -151,11 +155,13 @@ impl Proxy {
                         &status,
                         &ratelimit.unwrap_or(0)
                     );
-                    break Ok(status);
+                    break status;
                 }
                 None => continue,
             }
-        }
+        };
+
+        Ok(status)
     }
 
     async fn is_global_ratelimited(
