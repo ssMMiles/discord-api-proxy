@@ -2,11 +2,12 @@
 --  - Bot ID
 --  - Bucket ID
 -- 
---  And four Arguments:
---  - Global ratelimit expiration time (in ms)
+--  And five Arguments:
+--  - Global usage expiration time (in ms)
 --  - Lock value to check against.
 --  - Route bucket limit
---  - Route bucket expiration time (in ms)
+--  - Route bucket usage expiration time (in ms)
+--  - Route bucket TTL (in ms)
 local global_count_key = KEYS[1] .. ':count'
 local global_expire_at = tonumber(ARGV[1])
 
@@ -20,7 +21,13 @@ local route_lock = redis.call('GET', route_lock_key)
 
 if route_lock == lock_val then
   local route_limit = ARGV[3]
-  redis.call('SET', route_key, route_limit)
+  local bucket_expire_in = tonumber(ARGV[5])
+  
+  if bucket_expire_in == 0 then
+    redis.call('SET', route_key, route_limit)
+  else
+    redis.call('SET', route_key, route_limit, 'PX', bucket_expire_in)
+  end
 
   local route_expire_at = tonumber(ARGV[4])
   if route_expire_at ~= 0 then

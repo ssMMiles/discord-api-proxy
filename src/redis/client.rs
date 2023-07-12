@@ -466,12 +466,13 @@ impl ProxyRedisClient {
         bot_id: &str,
         lock_id: &str,
         global_rl: u16,
+        bucket_ttl: u64,
     ) -> Result<bool, RedisError> {
         self.pool
             .evalsha::<Option<bool>, &str, &str, Vec<&str>>(
                 &self.script_hashes.unlock_global,
                 bot_id,
-                vec![lock_id, &global_rl.to_string()],
+                vec![lock_id, &global_rl.to_string(), &bucket_ttl.to_string()],
             )
             .await
             .map(|r| r.unwrap_or(false))
@@ -483,12 +484,18 @@ impl ProxyRedisClient {
         lock_id: &str,
         route_rl: u16,
         reset_at: &str,
+        bucket_ttl: u64,
     ) -> Result<bool, RedisError> {
         self.pool
             .evalsha::<Option<bool>, &str, &str, Vec<&str>>(
                 &self.script_hashes.unlock_route,
                 route_rl_key,
-                vec![lock_id, &route_rl.to_string(), reset_at],
+                vec![
+                    lock_id,
+                    &route_rl.to_string(),
+                    reset_at,
+                    &bucket_ttl.to_string(),
+                ],
             )
             .await
             .map(|r| r.unwrap_or(false))

@@ -29,14 +29,16 @@ impl Proxy {
         route: &RouteInfo,
         route_bucket: &str,
     ) -> Result<RatelimitStatus, ProxyError> {
-        let use_global_rl = match route.resource {
+        let route_uses_global_rl = match route.resource {
             Resources::Webhooks => false,
             Resources::Interactions => false,
             _ => true,
         };
 
+        let use_global_rl = !self.config.disable_global_rl && route_uses_global_rl;
+
         log::debug!(
-            "[{}] Using Global Ratelimit : {}",
+            "[{}] Using Global Ratelimit: {}",
             route_bucket,
             use_global_rl
         );
@@ -212,7 +214,7 @@ impl Proxy {
 
                     if self
                         .redis
-                        .unlock_global(global_id, &lock_value, ratelimit)
+                        .unlock_global(global_id, &lock_value, ratelimit, self.config.bucket_ttl_ms)
                         .await?
                     {
                         log::debug!(
@@ -324,11 +326,10 @@ impl Proxy {
 
     pub async fn update_ratelimits(
         &self,
-        _global_rl_key: String,
         headers: &HeaderMap,
+        route_info: &RouteInfo,
         bucket: String,
         bucket_lock: Option<String>,
-        _sent_request_at: u128,
     ) -> Result<(), RedisErrorWrapper> {
         let bucket_limit = match headers.get("X-RateLimit-Limit") {
             Some(limit) => limit.clone().to_str().unwrap().parse::<u16>().unwrap(),
@@ -346,6 +347,14 @@ impl Proxy {
         };
 
         let redis = self.redis.clone();
+
+        // Force 15 minute TTL for interaction routes
+        let bucket_ttl = if route_info.resource == Resources::Interactions {
+            15 * 60 * 1000
+        } else {
+            self.config.bucket_ttl_ms
+        };
+
         tokio::task::spawn(async move {
             log::debug!(
                 "[{}] New bucket! Setting ratelimit to {}, resetting at {}",
@@ -356,7 +365,13 @@ impl Proxy {
 
             let result = if bucket_lock.is_some() {
                 redis
-                    .unlock_route(&bucket, &bucket_lock.unwrap(), bucket_limit, &reset_at)
+                    .unlock_route(
+                        &bucket,
+                        &bucket_lock.unwrap(),
+                        bucket_limit,
+                        &reset_at,
+                        bucket_ttl,
+                    )
                     .await
             } else {
                 redis.expire_route(&bucket, &reset_at).await

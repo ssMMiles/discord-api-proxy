@@ -17,7 +17,6 @@ use std::{
         atomic::{AtomicBool, Ordering},
         Arc,
     },
-    time::{SystemTime, UNIX_EPOCH},
 };
 use thiserror::Error;
 
@@ -266,19 +265,14 @@ impl Proxy {
             .request(req)
             .await
             .map_err(|e| ProxyError::RequestError(e))?;
-        let sent_request_at = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_millis();
 
         if let RatelimitStatus::Ok(bucket_lock) = ratelimit_status {
             match self
                 .update_ratelimits(
-                    id.to_string(),
                     result.headers(),
+                    route_info,
                     route_bucket.to_string(),
                     bucket_lock,
-                    sent_request_at,
                 )
                 .await
             {

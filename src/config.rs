@@ -60,7 +60,10 @@ pub struct ProxyEnvConfig {
     pub global_rl_strategy: NewBucketStrategy,
     pub route_rl_strategy: NewBucketStrategy,
 
+    pub disable_global_rl: bool,
+
     pub global_time_slice_offset_ms: u64,
+    pub bucket_ttl_ms: u64,
 
     pub lock_timeout: Duration,
     pub ratelimit_timeout: Duration,
@@ -177,8 +180,12 @@ impl AppEnvConfig {
             NewBucketStrategy::Strict,
         );
 
+        let disable_global_rl = get_and_parse_envvar::<bool>("DISABLE_GLOBAL_RATELIMIT", false);
+
         let global_time_slice_offset_ms =
             get_and_parse_envvar::<u64>("GLOBAL_TIME_SLICE_OFFSET", 200);
+
+        let bucket_ttl_ms = get_and_parse_envvar::<u64>("BUCKET_TTL", 86400000);
 
         let disable_http2 = get_and_parse_envvar::<bool>("DISABLE_HTTP2", false);
 
@@ -206,9 +213,12 @@ impl AppEnvConfig {
 
             proxy: Arc::new(ProxyEnvConfig {
                 global_time_slice_offset_ms,
+                bucket_ttl_ms,
 
                 global_rl_strategy: global_ratelimit_strategy,
                 route_rl_strategy: route_ratelimit_strategy,
+
+                disable_global_rl,
 
                 lock_timeout: Duration::from_millis(lock_wait_timeout),
                 ratelimit_timeout: Duration::from_millis(ratelimit_timeout),
