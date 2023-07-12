@@ -31,12 +31,9 @@ impl Proxy {
     ) -> Result<RatelimitStatus, ProxyError> {
         let use_global_rl = match route.resource {
             Resources::Webhooks => false,
+            Resources::Interactions => false,
             _ => true,
         };
-
-        if route.resource == Resources::Interactions {
-            return Ok(RatelimitStatus::Ok(None));
-        }
 
         log::debug!(
             "[{}] Using Global Ratelimit : {}",
