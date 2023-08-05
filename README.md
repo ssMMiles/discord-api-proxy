@@ -46,12 +46,13 @@ When sending globally ratelimited requests, the proxy currently starts the 1s bu
 ### HTTP2 Connection Drops
 These are caused by the underlying HTTP library, see https://github.com/hyperium/hyper/issues/2500. If you're seeing errors, you should use the `DISABLE_HTTP2` environment variable until the linked issue is resolved.
 
-### Overloading
-Under heavy load slow calls to Redis can cause the global ratelimit time slice to drift and let through more requests than it should.
+### Redis Latency
+The API proxy relies on Redis to store ratelimiting information, so keeping the latency between proxy nodes and Redis as low as possible is crucial.
 
-To mitigate this, the proxy monitors its latency to Redis and will reject requests with a 503 and an `x-sent-by-proxy` header if things slow down too much. These could just be caused by a short latency spike, but if it's happening often you should take a look.
+If the ratelimit check takes longer than is safe, it will first be retried a few times to account for brief latency spikes (these can be common, especially depending on your Redis configuration/hosting environment, but are not a problem).
+If the check still fails, the request will be aborted with a 503 + `x-sent-by-proxy` header.
 
-If you're seeing lots of warnings about this in your logs, [check out this page](https://redis.io/docs/management/optimization/latency/).
+Warnings about latency spikes are generally fine, but if it starts to cause requests to fail [check out this page](https://redis.io/docs/management/optimization/latency/).
 
 ## Credits
   - [Nirn Proxy](https://github.com/germanoeich/nirn-proxy) by [@germanoeich](https://github.com/germanoeich) - Used as a reference for bucket mappings
