@@ -24,7 +24,7 @@ If you get a 429 from the proxy, you should just retry until it works. If it's h
 | -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `HOST`                     | The host to listen on. Defaults to `127.0.0.1`.                                                                                                                                                                                                                                                             |
 | `PORT`                     | The port to listen on. Defaults to `8080`.                                                                                                                                                                                                                                                                  |
-| `DISABLE_HTTP2`            | Whether to disable HTTP/2 support. Defaults to `false`.                                                                                                                                                                                                                                                     |
+| `DISABLE_HTTP2`            | Whether to disable HTTP/2 support. Defaults to `true`.                                                                                                                                                                                                                                                      |
 | `REDIS_HOST`               | The host of the Redis server. Defaults to `127.0.0.1`.                                                                                                                                                                                                                                                      |
 | `REDIS_PORT`               | The port of the Redis server. Defaults to `6379`.                                                                                                                                                                                                                                                           |
 | `REDIS_USER`               | The host of the Redis server. Defaults to an empty string, is only available on Redis 6+.                                                                                                                                                                                                                   |
@@ -42,6 +42,9 @@ If you get a 429 from the proxy, you should just retry until it works. If it's h
 
 ### Slightly Reduced Throughput
 When sending globally ratelimited requests, the proxy currently starts the 1s bucket time from when the first response is received as Discord never provide the exact time. This can cause the proxy to be slightly over-restrictive depending on your , with a bot where the global ratelimit is 50 only being allowed up to ~47 requests per second.
+
+### HTTP2 Connection Drops
+These are caused by the underlying HTTP library, see https://github.com/hyperium/hyper/issues/2500. If you're seeing errors, you should use the `DISABLE_HTTP2` environment variable until the linked issue is resolved.
 
 ### Overloading
 Under heavy load slow calls to Redis can cause the global ratelimit time slice to drift and let through more requests than it should.

@@ -279,8 +279,6 @@ impl ProxyRedisClient {
             }
         }
 
-        drop(self);
-
         select! {
           _ = message_task => {
             log::error!("PubSub message receiver task exited unexpectedly.");

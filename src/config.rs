@@ -187,7 +187,7 @@ impl AppEnvConfig {
 
         let bucket_ttl_ms = get_and_parse_envvar::<u64>("BUCKET_TTL", 86400000);
 
-        let disable_http2 = get_and_parse_envvar::<bool>("DISABLE_HTTP2", false);
+        let disable_http2 = get_and_parse_envvar::<bool>("DISABLE_HTTP2", true);
 
         let host = get_envvar_with_default("HOST", "127.0.0.1".to_string());
         let port = get_and_parse_envvar::<u16>("PORT", 8080);
