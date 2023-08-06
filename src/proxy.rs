@@ -25,9 +25,8 @@ use crate::{
     config::{ProxyEnvConfig, RedisEnvConfig},
     discord::DiscordError,
     metrics::{
-        GLOBAL_429_COLLECTOR, PROXY_ERROR_COLLECTOR, PROXY_GLOBAL_429_COLLECTOR,
-        PROXY_OVERLOAD_COLLECTOR, PROXY_REQUESTS, PROXY_ROUTE_429_COLLECTOR, ROUTE_429_COLLECTOR,
-        SHARED_429_COLLECTOR,
+        record_failed_request_metrics, record_overloaded_request_metrics,
+        record_ratelimited_request_metrics, record_successful_request_metrics,
     },
     ratelimits::RatelimitStatus,
     redis::ProxyRedisClient,
@@ -38,7 +37,7 @@ use hyper_trust_dns::TrustDnsResolver;
 
 #[cfg(feature = "metrics")]
 use {
-    crate::metrics::{register_metrics, REGISTRY, RESPONSE_TIME_COLLECTOR},
+    crate::metrics::{register_metrics, REGISTRY},
     prometheus::{Encoder, TextEncoder},
 };
 
@@ -147,26 +146,13 @@ impl Proxy {
         {
             Ok(response) => {
                 #[cfg(feature = "metrics")]
-                {
-                    RESPONSE_TIME_COLLECTOR
-                        .with_label_values(&[
-                            id,
-                            &method.to_string(),
-                            &route_info.display_route,
-                            response.status().as_str(),
-                        ])
-                        .observe(start.elapsed().as_secs_f64());
-
-                    PROXY_REQUESTS.with_label_values(&[id]).inc();
-                }
+                record_successful_request_metrics(id, &method, route_info, start, &response);
 
                 response
             }
             Err(err) => {
                 #[cfg(feature = "metrics")]
-                PROXY_ERROR_COLLECTOR
-                    .with_label_values(&[id, &method.to_string(), &route_info.display_route])
-                    .inc();
+                record_failed_request_metrics(id, &method, route_info);
 
                 log::error!("Internal Server Error: {:?}", err);
 
@@ -203,25 +189,29 @@ impl Proxy {
         match ratelimit_status {
             RatelimitStatus::GlobalRatelimited => {
                 #[cfg(feature = "metrics")]
-                PROXY_GLOBAL_429_COLLECTOR
-                    .with_label_values(&[id, &method.to_string(), &route_info.display_route])
-                    .inc();
+                record_ratelimited_request_metrics(
+                    crate::metrics::RatelimitType::Global,
+                    id,
+                    method,
+                    route_info,
+                );
 
                 return Ok(generate_ratelimit_response(id));
             }
             RatelimitStatus::RouteRatelimited => {
                 #[cfg(feature = "metrics")]
-                PROXY_ROUTE_429_COLLECTOR
-                    .with_label_values(&[id, &method.to_string(), &route_info.display_route])
-                    .inc();
+                record_ratelimited_request_metrics(
+                    crate::metrics::RatelimitType::Route,
+                    id,
+                    method,
+                    route_info,
+                );
 
                 return Ok(generate_ratelimit_response(&route_info.route));
             }
             RatelimitStatus::ProxyOverloaded => {
                 #[cfg(feature = "metrics")]
-                PROXY_OVERLOAD_COLLECTOR
-                    .with_label_values(&[id, &method.to_string(), &route_info.display_route])
-                    .inc();
+                record_overloaded_request_metrics(id, method, route_info);
 
                 return Ok(Response::builder()
                     .status(503)
@@ -295,9 +285,12 @@ impl Proxy {
 
                 if is_shared_ratelimit {
                     #[cfg(feature = "metrics")]
-                    SHARED_429_COLLECTOR
-                        .with_label_values(&[id, &method.to_string(), &route_info.display_route])
-                        .inc();
+                    record_ratelimited_request_metrics(
+                        crate::metrics::RatelimitType::Shared,
+                        id,
+                        method,
+                        route_info,
+                    );
 
                     log::debug!("Discord returned Shared 429!");
                 } else {
@@ -308,19 +301,16 @@ impl Proxy {
                         .unwrap_or(false);
 
                     #[cfg(feature = "metrics")]
-                    {
+                    record_ratelimited_request_metrics(
                         if is_global {
-                            GLOBAL_429_COLLECTOR.with_label_values(&[id]).inc();
+                            crate::metrics::RatelimitType::GlobalProxy
                         } else {
-                            ROUTE_429_COLLECTOR
-                                .with_label_values(&[
-                                    id,
-                                    &method.to_string(),
-                                    &route_info.display_route,
-                                ])
-                                .inc();
-                        }
-                    }
+                            crate::metrics::RatelimitType::RouteProxy
+                        },
+                        id,
+                        method,
+                        route_info,
+                    );
 
                     log::error!("Discord returned 429! Global: {:?} Scope: {:?} - ABORTING REQUESTS FOR {}ms!", is_global, result.headers().get("X-RateLimit-Scope"), self.config.ratelimit_timeout.as_millis());
 
