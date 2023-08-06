@@ -40,8 +40,6 @@ const GET_GATEWAY_URL: &'static str = "https://discord.com/api/v10/gateway/bot";
 
 impl Proxy {
     pub async fn fetch_discord_global_ratelimit(&self, token: &str) -> Result<u16, DiscordError> {
-        println!("CHECKING DISCORD RL");
-
         let req = Request::builder()
             .method("GET")
             .uri(GET_GATEWAY_URL)
