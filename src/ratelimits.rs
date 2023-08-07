@@ -37,7 +37,7 @@ impl Proxy {
 
         let use_global_rl = !self.config.disable_global_rl && route_uses_global_rl;
 
-        log::debug!(
+        tracing::debug!(
             "[{}] Using Global Ratelimit: {}",
             route_bucket,
             use_global_rl
@@ -90,7 +90,7 @@ impl Proxy {
                 retries += 1;
 
                 if retries == 3 {
-                    log::error!("Ratelimit check is overloaded 3 times in a row, returning proxy overloaded.");
+                    tracing::error!("Ratelimit check is overloaded 3 times in a row, returning proxy overloaded.");
                     break RatelimitStatus::ProxyOverloaded;
                 }
             }
@@ -122,7 +122,7 @@ impl Proxy {
             }
         };
 
-        log::debug!("[{}] Ratelimit Status: {:?}", route_bucket, status);
+        tracing::debug!("[{}] Ratelimit Status: {:?}", route_bucket, status);
 
         Ok(status)
     }
@@ -141,14 +141,14 @@ impl Proxy {
                 retries += 1;
 
                 if retries == 3 {
-                    log::error!("Ratelimit check is overloaded 3 times in a row, returning proxy overloaded.");
+                    tracing::error!("Ratelimit check is overloaded 3 times in a row, returning proxy overloaded.");
                     break RatelimitStatus::ProxyOverloaded;
                 }
             }
 
             match self.is_route_ratelimited(route_bucket, ratelimit).await? {
                 Some(status) => {
-                    log::debug!(
+                    tracing::debug!(
                         "[{}] Bucket Ratelimit Status: {:?} - Count: {}",
                         &route_bucket,
                         &status,
@@ -178,7 +178,7 @@ impl Proxy {
                 }
             }
             None => {
-                log::debug!(
+                tracing::debug!(
                     "[{}] Global ratelimit not set, will try to acquire a lock and set it...",
                     global_id
                 );
@@ -189,16 +189,16 @@ impl Proxy {
                 let mut ratelimit = 50;
                 if lock {
                     if global_id == "global-{0}" || token.is_none() {
-                        log::debug!("[{}] Global ratelimit lock acquired, but request is unauthenticated. Defaulting to 50 requests/s.", &global_id);
+                        tracing::debug!("[{}] Global ratelimit lock acquired, but request is unauthenticated. Defaulting to 50 requests/s.", &global_id);
                     } else {
-                        log::debug!(
+                        tracing::debug!(
                             "[{}] Global ratelimit lock acquired, fetching from Discord.",
                             &global_id
                         );
                         ratelimit = match self.fetch_discord_global_ratelimit(token.unwrap()).await
                         {
                             Ok(limit) => {
-                                log::debug!(
+                                tracing::debug!(
                                     "[{}] Global ratelimit fetched from Discord: {}",
                                     &global_id,
                                     &limit
@@ -206,7 +206,7 @@ impl Proxy {
                                 limit
                             }
                             Err(e) => {
-                                log::debug!("[{}] Failed to fetch global ratelimit from Discord, defaulting to 50: {}", &global_id, &e);
+                                tracing::debug!("[{}] Failed to fetch global ratelimit from Discord, defaulting to 50: {}", &global_id, &e);
                                 50
                             }
                         }
@@ -217,13 +217,13 @@ impl Proxy {
                         .unlock_global(global_id, &lock_value, ratelimit, self.config.bucket_ttl_ms)
                         .await?
                     {
-                        log::debug!(
+                        tracing::debug!(
                             "[{}] Global ratelimit set to {} and lock released.",
                             &global_id,
                             &ratelimit
                         );
                     } else {
-                        log::debug!(
+                        tracing::debug!(
                             "[{}] Global ratelimit lock expired before we could release it.",
                             &global_id
                         );
@@ -232,23 +232,23 @@ impl Proxy {
                     return Ok(None);
                 } else {
                     if self.config.global_rl_strategy == NewBucketStrategy::Strict {
-                        log::debug!(
+                        tracing::debug!(
                             "[{}]  Lock is taken and ratelimit config is Strict, awaiting unlock.",
                             &global_id
                         );
 
                         select! {
                           Ok(_) = self.redis.await_lock(global_id) => {
-                            log::debug!("[{}] Unlock received, continuing.", &global_id);
+                            tracing::debug!("[{}] Unlock received, continuing.", &global_id);
 
                             return Ok(None);
                           },
                           _ = tokio::time::sleep(self.config.lock_timeout) => {
-                            log::debug!("[{}] Lock wait expired, retrying.", &global_id);
+                            tracing::debug!("[{}] Lock wait expired, retrying.", &global_id);
                           }
                         };
 
-                        log::debug!(
+                        tracing::debug!(
                             "[{}] Failed to obtain unlock from PubSub, cleaning up.",
                             &global_id
                         );
@@ -257,7 +257,7 @@ impl Proxy {
                         return Ok(None);
                     }
 
-                    log::debug!("[{}] Lock is taken and ratelimit config is Loose, skipping ratelimit check.", &global_id);
+                    tracing::debug!("[{}] Lock is taken and ratelimit config is Loose, skipping ratelimit check.", &global_id);
                 }
             }
         };
@@ -279,7 +279,7 @@ impl Proxy {
                 }
             }
             None => {
-                log::debug!(
+                tracing::debug!(
                     "[{}] Ratelimit not set, will try to acquire a lock and set it...",
                     &route_bucket
                 );
@@ -288,23 +288,23 @@ impl Proxy {
                 let lock = self.redis.lock_bucket(route_bucket, &lock_value).await?;
 
                 if lock {
-                    log::debug!("[{}] Acquired bucket lock.", route_bucket);
+                    tracing::debug!("[{}] Acquired bucket lock.", route_bucket);
 
                     return Ok(Some(RatelimitStatus::Ok(Some(lock_value))));
                 } else {
                     if self.config.route_rl_strategy == NewBucketStrategy::Strict {
-                        log::debug!("[{}]  Lock is taken, awaiting unlock.", &route_bucket);
+                        tracing::debug!("[{}]  Lock is taken, awaiting unlock.", &route_bucket);
 
                         select! {
                           Ok(_) = self.redis.await_lock(route_bucket) => {
-                            log::debug!("[{}] Unlock received, continuing.", &route_bucket);
+                            tracing::debug!("[{}] Unlock received, continuing.", &route_bucket);
                           },
                           _ = tokio::time::sleep(self.config.lock_timeout) => {
-                            log::debug!("[{}] Lock wait expired, retrying.", &route_bucket);
+                            tracing::debug!("[{}] Lock wait expired, retrying.", &route_bucket);
                           }
                         };
 
-                        log::debug!(
+                        tracing::debug!(
                             "[{}] Failed to obtain unlock from PubSub, cleaning up.",
                             &route_bucket
                         );
@@ -313,7 +313,7 @@ impl Proxy {
                         return Ok(None);
                     }
 
-                    log::debug!(
+                    tracing::debug!(
                         "[{}]  Lock is taken, skipping ratelimit check.",
                         &route_bucket
                     );
@@ -356,7 +356,7 @@ impl Proxy {
         };
 
         tokio::task::spawn(async move {
-            log::debug!(
+            tracing::debug!(
                 "[{}] New bucket! Setting ratelimit to {}, resetting at {}",
                 bucket,
                 bucket_limit,
@@ -378,7 +378,7 @@ impl Proxy {
             };
 
             if result.is_err() {
-                log::debug!(
+                tracing::debug!(
                     "[{}] Failed to unlock route, lock may have expired.",
                     bucket
                 );
@@ -393,16 +393,16 @@ fn ratelimit_check_is_overloaded(route_bucket: &str, started_at: Instant) -> boo
     let time_taken = started_at.elapsed().as_millis();
 
     if time_taken > 50 {
-        log::warn!("[{}] Ratelimit checks took {}ms to respond. Redis or the proxy is overloaded, retrying.", route_bucket, time_taken);
+        tracing::warn!("[{}] Ratelimit checks took {}ms to respond. Redis or the proxy is overloaded, retrying.", route_bucket, time_taken);
         return true;
     } else if time_taken > 25 {
-        log::debug!(
+        tracing::debug!(
             "[{}] Ratelimit checks took {}ms to respond. Redis or the proxy is getting overloaded.",
             route_bucket,
             time_taken
         );
     } else {
-        log::debug!("[{}] Redis took {}ms to respond.", route_bucket, time_taken);
+        tracing::debug!("[{}] Redis took {}ms to respond.", route_bucket, time_taken);
     }
 
     false

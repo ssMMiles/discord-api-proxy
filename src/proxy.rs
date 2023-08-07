@@ -154,7 +154,7 @@ impl Proxy {
                 #[cfg(feature = "metrics")]
                 record_failed_request_metrics(id, &method, route_info);
 
-                log::error!("Internal Server Error: {:?}", err);
+                tracing::error!("Internal Server Error: {:?}", err);
 
                 Response::builder()
                     .status(500)
@@ -163,7 +163,7 @@ impl Proxy {
             }
         };
 
-        log::debug!(
+        tracing::debug!(
             "[{}] Proxied request in {}ms. Status Code: {}",
             &route_bucket,
             start.elapsed().as_millis(),
@@ -268,7 +268,7 @@ impl Proxy {
             {
                 Ok(_) => {}
                 Err(e) => {
-                    log::error!("Error updating ratelimits after proxying request: {}", e);
+                    tracing::error!("Error updating ratelimits after proxying request: {}", e);
                 }
             }
         }
@@ -292,7 +292,7 @@ impl Proxy {
                         route_info,
                     );
 
-                    log::debug!("Discord returned Shared 429!");
+                    tracing::debug!("Discord returned Shared 429!");
                 } else {
                     let is_global = result
                         .headers()
@@ -312,7 +312,7 @@ impl Proxy {
                         route_info,
                     );
 
-                    log::error!("Discord returned 429! Global: {:?} Scope: {:?} - ABORTING REQUESTS FOR {}ms!", is_global, result.headers().get("X-RateLimit-Scope"), self.config.ratelimit_timeout.as_millis());
+                    tracing::error!("Discord returned 429! Global: {:?} Scope: {:?} - ABORTING REQUESTS FOR {}ms!", is_global, result.headers().get("X-RateLimit-Scope"), self.config.ratelimit_timeout.as_millis());
 
                     self.disabled.store(true, Ordering::Release);
                     tokio::time::sleep(self.config.ratelimit_timeout).await;
@@ -323,7 +323,7 @@ impl Proxy {
                 let code = status.as_u16();
 
                 if code < 400 && code > 499 {
-                    log::warn!(
+                    tracing::warn!(
                         "Discord returned unexpected code {} for {} {}",
                         code,
                         method,

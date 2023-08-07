@@ -187,8 +187,8 @@ impl ProxyRedisClient {
                 println!("Pool reconnected to Redis.");
 
                 match reconnect_instance.register_scripts().await {
-                    Ok(_) => log::debug!("Scripts reloaded."),
-                    Err(e) => log::error!("Error reloading scripts: {}", e),
+                    Ok(_) => tracing::debug!("Scripts reloaded."),
+                    Err(e) => tracing::error!("Error reloading scripts: {}", e),
                 }
             }
 
@@ -238,18 +238,18 @@ impl ProxyRedisClient {
     async fn start_pubsub_task(&self) -> () {
         let _self = self.clone();
 
-        log::debug!("Starting PubSub task...");
+        tracing::debug!("Starting PubSub task...");
 
         let mut message_stream = _self.pubsub_receiver.on_message();
         let message_task = tokio::spawn(async move {
             while let Ok(message) = message_stream.recv().await {
                 match message.value {
                     RedisValue::String(payload) => {
-                        log::debug!("Received unlock over PubSub for {}.", &payload);
+                        tracing::debug!("Received unlock over PubSub for {}.", &payload);
 
                         _self.release_lock(&payload).await;
                     }
-                    _ => log::warn!("Received unexpected message type over unlock channel."),
+                    _ => tracing::warn!("Received unexpected message type over unlock channel."),
                 }
             }
 
@@ -258,17 +258,17 @@ impl ProxyRedisClient {
 
         let manage_subscription_task = self.pubsub_receiver.manage_subscriptions();
 
-        log::debug!("Subscribing to unlock channel...");
+        tracing::debug!("Subscribing to unlock channel...");
 
         loop {
             match self.pubsub_receiver.subscribe::<(), &str>("unlock").await {
                 Ok(_) => {
-                    log::info!("Subscribed to unlock channel");
+                    tracing::info!("Subscribed to unlock channel");
 
                     break;
                 }
                 Err(e) => {
-                    log::error!(
+                    tracing::error!(
                         "Failed to subscribe to unlock channel. Retrying in 5 seconds: {:?}",
                         e
                     );
@@ -281,10 +281,10 @@ impl ProxyRedisClient {
 
         select! {
           _ = message_task => {
-            log::error!("PubSub message receiver task exited unexpectedly.");
+            tracing::error!("PubSub message receiver task exited unexpectedly.");
           },
           _ = manage_subscription_task => {
-            log::error!("PubSub subscription manager task exited unexpectedly.");
+            tracing::error!("PubSub subscription manager task exited unexpectedly.");
           },
         }
     }
@@ -314,7 +314,7 @@ impl ProxyRedisClient {
                 let mut pubsub_channels_w = self.pubsub_channels.write().await;
 
                 if let Some(channel) = pubsub_channels_w.get(key) {
-                    log::debug!("Another thread subscribed to channel for key {} while this thread was waiting for the write lock, pushing to queue.", key);
+                    tracing::debug!("Another thread subscribed to channel for key {} while this thread was waiting for the write lock, pushing to queue.", key);
 
                     push_pending_client(channel.clone(), tx).await;
                     drop(pubsub_channels_w);
@@ -390,7 +390,7 @@ impl ProxyRedisClient {
         // match self.send_pubsub_command(key.to_string(), false).await {
         //   Ok(_) => (),
         //   Err(e) => {
-        //     log::error!("Error unsubscribing from PubSub channel {} after unlock. This will not resolve itself: {}", key, e);
+        //     tracing::error!("Error unsubscribing from PubSub channel {} after unlock. This will not resolve itself: {}", key, e);
         //   }
         // };
 
@@ -401,7 +401,7 @@ impl ProxyRedisClient {
         for tx in pending_clients.drain(..) {
             match tx.send(()) {
                 Ok(_) => (),
-                Err(e) => log::error!("Error completing a pending lock on {}: {:?}", key, e),
+                Err(e) => tracing::error!("Error completing a pending lock on {}: {:?}", key, e),
             }
         }
         drop(pending_clients);

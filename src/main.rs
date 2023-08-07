@@ -1,5 +1,7 @@
 use axum::{handler::Handler, routing::get, Router};
 use std::{net::SocketAddr, process::exit};
+use tracing::Level;
+use tracing_subscriber::FmtSubscriber;
 
 use crate::{
     config::AppEnvConfig,
@@ -22,18 +24,21 @@ mod ratelimits;
 
 #[tokio::main]
 async fn main() {
-    env_logger::init_from_env(
-        env_logger::Env::default().filter_or(env_logger::DEFAULT_FILTER_ENV, "info"),
-    );
+    tracing::subscriber::set_global_default(
+        FmtSubscriber::builder()
+            .with_max_level(Level::INFO)
+            .finish(),
+    )
+    .expect("Setting default trace subscriber failed.");
 
-    log::info!("Starting API proxy.");
+    tracing::info!("Starting API proxy.");
 
     let config = AppEnvConfig::from_env();
 
     let discord_proxy = match Proxy::new(config.proxy, config.redis).await {
         Ok(proxy) => proxy,
         Err(err) => {
-            log::error!("Failed to create proxy: {}", err);
+            tracing::error!("Failed to create proxy: {}", err);
             exit(1);
         }
     };
@@ -47,7 +52,7 @@ async fn main() {
         .route("/metrics", get(metrics).with_state(discord_proxy.clone()))
         .route_service("/api/*path", proxy_request.with_state(discord_proxy));
 
-    log::info!("Starting HTTP Server on http://{}", &addr);
+    tracing::info!("Starting HTTP Server on http://{}", &addr);
 
     let server = axum::Server::bind(&addr)
         .serve(app.into_make_service())
