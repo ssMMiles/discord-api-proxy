@@ -24,10 +24,6 @@ use crate::{
     buckets::{get_route_info, Resources, RouteInfo},
     config::{ProxyEnvConfig, RedisEnvConfig},
     discord::DiscordError,
-    metrics::{
-        record_failed_request_metrics, record_overloaded_request_metrics,
-        record_ratelimited_request_metrics, record_successful_request_metrics,
-    },
     ratelimits::RatelimitStatus,
     redis::ProxyRedisClient,
 };
@@ -37,7 +33,11 @@ use hyper_trust_dns::TrustDnsResolver;
 
 #[cfg(feature = "metrics")]
 use {
-    crate::metrics::{register_metrics, REGISTRY},
+    crate::metrics::{
+        record_failed_request_metrics, record_overloaded_request_metrics,
+        record_ratelimited_request_metrics, record_successful_request_metrics, register_metrics,
+        REGISTRY,
+    },
     prometheus::{Encoder, TextEncoder},
 };
 
