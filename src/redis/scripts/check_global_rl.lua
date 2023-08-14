@@ -4,30 +4,35 @@
 --  - 1-Infinity: Ratelimit OK, is number of requests in current bucket.
 --  
 --  Takes two Keys: 
---  - Bot ID
---  - Global RL Key w/ Time Slice
+--  - Global ID
+--  - Time Slice
 -- 
 --  Returns the global ratelimit status.
 --  - global_ratelimit_status
-local id = KEYS[1]
 
-local global_rl_key = KEYS[2]
-local global_count_key = global_rl_key .. ':count'
-
-local global_limit = tonumber(redis.call('GET', id))
-
-if global_limit == nil then
-  return false
+local function check_global_rl(global_id, time_slice)
+    local global_time_slice_key = global_id .. time_slice
+    local global_time_slice_count_key = global_time_slice_key .. ':count'
+    
+    local global_limit = tonumber(redis.call('GET', global_id))
+    
+    if global_limit == nil then
+        return false
+    end
+    
+    local global_time_slice_count = tonumber(redis.call('INCR', global_time_slice_count_key))
+    
+    if global_time_slice_count == 1 then
+        redis.call('EXPIRE', global_time_slice_count_key, 3)
+    end
+    
+    if global_time_slice_count > global_limit then
+        return 0
+    end
+    
+    return global_time_slice_count
 end
 
-local global_count = tonumber(redis.call('INCR', global_count_key))
-
-if global_count >= global_limit then
-  return 0
-end
-
-if global_count == 1 then
-  redis.call('EXPIRE', global_count_key, 3)
-end
-
-return global_count
+local global_id = KEYS[1]
+local time_slice = KEYS[2]
+return check_global_rl(global_id, time_slice)

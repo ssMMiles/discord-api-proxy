@@ -1,30 +1,33 @@
---  Takes one Key:
---  - Bot ID
+--  Keys:
+--  - Global ID
 -- 
---  And three Arguments:
---  - Lock value to check against.
+--  Arguments:
+--  - Request ID
 --  - Global limit
 --  - Global limit TTL (in ms)
 -- 
 --  Returns true if we unlocked the global bucket, false if we were too slow.
-local id = KEYS[1]
-local global_lock_key = id .. ':lock'
+
+local global_id = KEYS[1]
+local global_lock_key = global_id .. ':lock'
 
 local lock_val = ARGV[1]
+local global_limit = ARGV[2]
+local bucket_expire_in = ARGV[3]
+
+-- redis.log(redis.LOG_NOTICE, 'unlocking global bucket: ' .. global_id .. ' with lock key: ' .. global_lock_key .. ' and lock val: ' .. lock_val .. ' and limit: ' .. global_limit .. ' and expire in: ' .. bucket_expire_in)
+
 local global_lock = redis.call('GET', global_lock_key)
 
 if global_lock == lock_val then
-  local global_limit = ARGV[2]
-  local bucket_expire_in = tonumber(ARGV[3])
-
-  if bucket_expire_in == 0 then
-    redis.call('SET', id, global_limit)
+  if bucket_expire_in == '0' then
+    redis.call('SET', global_id, global_limit)
   else
-    redis.call('SET', id, global_limit, 'PX', bucket_expire_in)
+    redis.call('SET', global_id, global_limit, 'PX', bucket_expire_in)
   end
 
   redis.call('DEL', global_lock_key)
-  redis.call('PUBLISH', 'unlock', id)
+  redis.call('PUBLISH', 'unlock', global_id)
 
   return true
 end

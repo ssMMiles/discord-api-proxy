@@ -10,10 +10,10 @@ local route_key = KEYS[1]
 local route_lock_key = route_key .. ':lock'
 
 local lock_val = ARGV[1]
+local route_limit = ARGV[2]
 local route_lock = redis.call('GET', route_lock_key)
 
 if route_lock == lock_val then
-  local route_limit = ARGV[2]
   local bucket_expire_in = tonumber(ARGV[4])
 
   if bucket_expire_in == 0 then

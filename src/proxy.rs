@@ -1,16 +1,14 @@
-use base64_simd::forgiving_decode_to_vec;
 use fred::prelude::RedisError;
 use http::{
     header::{CONNECTION, TRANSFER_ENCODING, UPGRADE},
-    Method,
+    HeaderMap, Method,
 };
 use hyper::{
     client::{connect::dns::GaiResolver, HttpConnector},
     http::HeaderValue,
-    Body, Client, HeaderMap, Response, StatusCode, Uri,
+    Body, Client, Response, StatusCode, Uri,
 };
 use hyper_rustls::{HttpsConnector, HttpsConnectorBuilder};
-use std::time::Instant;
 use std::{
     str::FromStr,
     sync::{
@@ -19,13 +17,15 @@ use std::{
     },
 };
 use thiserror::Error;
+use tracing::{trace, trace_span};
 
 use crate::{
-    buckets::{get_route_info, Resources, RouteInfo},
+    buckets::BucketInfo,
     config::{ProxyEnvConfig, RedisEnvConfig},
     discord::DiscordError,
-    ratelimits::RatelimitStatus,
     redis::ProxyRedisClient,
+    request::DiscordRequestInfo,
+    responses,
 };
 
 #[cfg(feature = "trust-dns")]
@@ -41,14 +41,27 @@ use {
     prometheus::{Encoder, TextEncoder},
 };
 
-const INTERNAL_PROXY_ERROR: &'static str = "Internal Proxy Error";
+#[derive(Error, Debug)]
+pub enum ProxyError {
+    #[error("Redis Error: {0}")]
+    RedisError(#[from] RedisError),
+
+    #[error("Retrieving Global Ratelimit Info Failed: {0}")]
+    GlobalRatelimitInfoUnavailable(#[from] DiscordError),
+
+    #[error("Invalid Route: {0}")]
+    InvalidRequest(String),
+
+    #[error("Proxied Request Failed: {0}")]
+    ProxiedRequestError(#[from] hyper::Error),
+}
 
 #[derive(Clone)]
-pub struct Proxy<Resolver = GaiResolver> {
+pub struct Proxy {
     disabled: Arc<AtomicBool>,
 
     pub redis: Arc<ProxyRedisClient>,
-    pub http_client: Client<HttpsConnector<HttpConnector<Resolver>>, Body>,
+    pub http_client: Client<HttpsConnector<HttpConnector<GaiResolver>>, Body>,
 
     pub config: Arc<ProxyEnvConfig>,
 }
@@ -57,16 +70,10 @@ impl Proxy {
     pub async fn new(
         config: Arc<ProxyEnvConfig>,
         redis_config: Arc<RedisEnvConfig>,
-    ) -> Result<Self, ProxyError> {
-        let redis_client = ProxyRedisClient::new(redis_config)
-            .await
-            .map_err(|err| ProxyError::RedisInitFailed(err))?;
+    ) -> Result<Self, RedisError> {
+        let redis_client = ProxyRedisClient::new(redis_config).await?;
 
-        #[cfg(feature = "metrics")]
-        register_metrics();
-
-        let mut http_connector: HttpConnector = HttpConnector::new();
-
+        let mut http_connector = HttpConnector::new();
         http_connector.enforce_http(false);
 
         let builder = HttpsConnectorBuilder::new()
@@ -115,296 +122,163 @@ impl Proxy {
         return Response::new(Body::from("Metrics are disabled."));
     }
 
-    pub async fn process(&self, req: http::Request<Body>) -> Response<Body> {
-        let start = Instant::now();
-
-        let method = req.method().clone();
-        let path = req.uri().path().to_string();
-
-        let route_info = get_route_info(&method, &path);
-
-        let auth = match parse_headers(req.headers(), &route_info) {
-            Ok(auth) => auth,
-            Err(message) => {
-                return Response::builder()
-                    .status(400)
-                    .body(message.into())
-                    .unwrap()
-            }
+    pub async fn handle_request(&self, req: http::Request<Body>) -> Response<Body> {
+        let res = match self.process(req).await {
+            Ok(response) => response,
+            Err(err) => match err {
+                ProxyError::InvalidRequest(message) => responses::invalid_request(message),
+                ProxyError::ProxiedRequestError(err) => {
+                    tracing::error!("Proxied Request Failed: {:?}", err);
+                    responses::internal_error()
+                }
+                _ => {
+                    tracing::error!("Proxying Request Failed: {:?}", err);
+                    responses::internal_error()
+                }
+            },
         };
-
-        let (id, token): (&str, Option<&str>) = match &auth {
-            Some((id, token)) => (id, Some(token)),
-            None => ("noauth", None),
-        };
-
-        let route_bucket = format!("{{{}:{}-{}}}", id, method.to_string(), &route_info.route);
-
-        let res = match self
-            .handle_request(req, &route_info, &route_bucket, id, token, &method)
-            .await
-        {
-            Ok(response) => {
-                #[cfg(feature = "metrics")]
-                record_successful_request_metrics(id, &method, route_info, start, &response);
-
-                response
-            }
-            Err(err) => {
-                #[cfg(feature = "metrics")]
-                record_failed_request_metrics(id, &method, route_info);
-
-                tracing::error!("Internal Server Error: {:?}", err);
-
-                Response::builder()
-                    .status(500)
-                    .body(Body::from(INTERNAL_PROXY_ERROR))
-                    .unwrap()
-            }
-        };
-
-        tracing::debug!(
-            "[{}] Proxied request in {}ms. Status Code: {}",
-            &route_bucket,
-            start.elapsed().as_millis(),
-            res.status()
-        );
 
         return res;
     }
 
-    pub async fn handle_request(
-        &self,
-        mut req: http::Request<Body>,
-        route_info: &RouteInfo,
-        route_bucket: &str,
-        id: &str,
-        token: Option<&str>,
-        method: &Method,
-    ) -> Result<Response<Body>, ProxyError> {
-        let ratelimit_status = self
-            .check_ratelimits(id, &token, &route_info, &route_bucket)
-            .await?;
+    async fn process(&self, mut req: http::Request<Body>) -> Result<Response<Body>, ProxyError> {
+        let span = trace_span!("process_request");
+        let _guard = span.enter();
 
-        match ratelimit_status {
-            RatelimitStatus::GlobalRatelimited => {
-                #[cfg(feature = "metrics")]
-                record_ratelimited_request_metrics(
-                    crate::metrics::RatelimitType::Global,
-                    id,
-                    method,
-                    route_info,
-                );
+        let method = req.method().clone();
+        let path = req.uri().path();
+        let headers = req.headers();
 
-                return Ok(generate_ratelimit_response(id));
+        let request_info = DiscordRequestInfo::new(&method, path, headers)?;
+
+        // trace!(?request_info);
+
+        drop(_guard);
+
+        let lock_token = match self.check_ratelimits(&request_info).await? {
+            Ok(lock_token) => lock_token,
+            Err(response) => {
+                return Ok(response);
             }
-            RatelimitStatus::RouteRatelimited => {
-                #[cfg(feature = "metrics")]
-                record_ratelimited_request_metrics(
-                    crate::metrics::RatelimitType::Route,
-                    id,
-                    method,
-                    route_info,
-                );
+        };
 
-                return Ok(generate_ratelimit_response(&route_info.route));
-            }
-            RatelimitStatus::ProxyOverloaded => {
-                #[cfg(feature = "metrics")]
-                record_overloaded_request_metrics(id, method, route_info);
+        let headers = req.headers_mut();
 
-                return Ok(Response::builder()
-                    .status(503)
-                    .header("x-sent-by-proxy", "true")
-                    .body("Proxy Overloaded".into())
-                    .unwrap());
-            }
-            _ => {}
-        }
-
-        req.headers_mut()
-            .insert("Host", HeaderValue::from_static("discord.com"));
-        req.headers_mut().insert(
+        headers.insert("Host", HeaderValue::from_static("discord.com"));
+        headers.insert(
             "User-Agent",
-            HeaderValue::from_static("limbo-labs/discord-api-proxy/1.0"),
+            HeaderValue::from_static("limbo-labs/discord-api-proxy/1.2"),
         );
 
         // Remove HTTP2 headers
-        req.headers_mut().remove(CONNECTION);
-        req.headers_mut().remove("keep-alive");
-        req.headers_mut().remove("proxy-connection");
-        req.headers_mut().remove(TRANSFER_ENCODING);
-        req.headers_mut().remove(UPGRADE);
+        headers.remove(CONNECTION);
+        headers.remove("keep-alive");
+        headers.remove("proxy-connection");
+        headers.remove(TRANSFER_ENCODING);
+        headers.remove(UPGRADE);
 
         let path_and_query = match req.uri().path_and_query() {
             Some(path_and_query) => path_and_query.as_str(),
             None => "/",
         };
 
-        *req.uri_mut() = Uri::from_str(&format!("https://discord.com{}", path_and_query)).unwrap();
+        *req.uri_mut() = Uri::from_str(&format!("https://discord.com{}", path_and_query))
+            .expect("Failed to rebuild URI.");
 
         if self.disabled.load(Ordering::Acquire) {
-            return Ok(Response::builder()
-                .status(503)
-                .body("Temporarily Overloaded".into())
-                .unwrap());
+            return Ok(responses::overloaded());
         }
 
-        let result = self
-            .http_client
-            .request(req)
-            .await
-            .map_err(|e| ProxyError::RequestError(e))?;
+        trace!(?lock_token, "Sending request to Discord.");
+        let response = self.http_client.request(req).await?;
 
-        if let RatelimitStatus::Ok(bucket_lock) = ratelimit_status {
-            match self
-                .update_ratelimits(
-                    result.headers(),
-                    route_info,
-                    route_bucket.to_string(),
-                    bucket_lock,
-                )
-                .await
-            {
-                Ok(_) => {}
-                Err(e) => {
-                    tracing::error!("Error updating ratelimits after proxying request: {}", e);
-                }
-            }
-        }
+        self.process_response(
+            response.status(),
+            response.headers(),
+            &request_info,
+            lock_token,
+        )
+        .await?;
 
-        let status = result.status();
-        match status {
-            StatusCode::OK => {}
-            StatusCode::TOO_MANY_REQUESTS => {
-                let is_shared_ratelimit = result
-                    .headers()
-                    .get("X-RateLimit-Scope")
-                    .map(|v| v == "shared")
-                    .unwrap_or(false);
-
-                if is_shared_ratelimit {
-                    #[cfg(feature = "metrics")]
-                    record_ratelimited_request_metrics(
-                        crate::metrics::RatelimitType::Shared,
-                        id,
-                        method,
-                        route_info,
-                    );
-
-                    tracing::debug!("Discord returned Shared 429!");
-                } else {
-                    let is_global = result
-                        .headers()
-                        .get("X-RateLimit-Global")
-                        .map(|v| v == "true")
-                        .unwrap_or(false);
-
-                    #[cfg(feature = "metrics")]
-                    record_ratelimited_request_metrics(
-                        if is_global {
-                            crate::metrics::RatelimitType::GlobalProxy
-                        } else {
-                            crate::metrics::RatelimitType::RouteProxy
-                        },
-                        id,
-                        method,
-                        route_info,
-                    );
-
-                    tracing::error!("Discord returned 429! Global: {:?} Scope: {:?} - ABORTING REQUESTS FOR {}ms!", is_global, result.headers().get("X-RateLimit-Scope"), self.config.ratelimit_timeout.as_millis());
-
-                    self.disabled.store(true, Ordering::Release);
-                    tokio::time::sleep(self.config.ratelimit_timeout).await;
-                    self.disabled.store(false, Ordering::Release);
-                }
-            }
-            _ => {
-                let code = status.as_u16();
-
-                if code < 400 && code > 499 {
-                    tracing::warn!(
-                        "Discord returned unexpected code {} for {} {}",
-                        code,
-                        method,
-                        route_info.route
-                    );
-                }
-            }
-        }
-
-        Ok(result)
+        Ok(response)
     }
-}
 
-fn parse_headers(
-    headers: &HeaderMap,
-    route_info: &RouteInfo,
-) -> Result<Option<(String, String)>, String> {
-    // Use auth header by default
-    let token = match headers.get("Authorization") {
-        Some(header) => {
-            let token = match header.to_str() {
-                Ok(token) => token,
-                Err(_) => return Err("Invalid Authorization header".to_string()),
-            };
-
-            if !token.starts_with("Bot ") {
-                return Err("Invalid Authorization header".to_string());
-            }
-
-            token.to_string()
+    async fn process_response(
+        &self,
+        status: StatusCode,
+        headers: &HeaderMap,
+        request_info: &DiscordRequestInfo,
+        lock_token: Option<String>,
+    ) -> Result<(), ProxyError> {
+        if status == StatusCode::TOO_MANY_REQUESTS {
+            self.handle_429(headers).await;
         }
-        None => {
-            if (route_info.resource == Resources::Webhooks
-                && route_info.route.split("/").count() != 2)
-                || route_info.resource == Resources::OAuth2
-                || route_info.resource == Resources::Interactions
-            {
-                return Ok(None);
-            }
 
-            return Err("Missing Authorization header".to_string());
+        self.update_ratelimits(headers, &request_info, lock_token)
+            .await?;
+
+        Ok(())
+    }
+
+    async fn handle_429(&self, headers: &HeaderMap) {
+        let is_shared_ratelimit = headers
+            .get("X-RateLimit-Scope")
+            .map(|v| v == "shared")
+            .unwrap_or(false);
+
+        let id = "temp";
+        let method = Method::GET;
+        let route_info = BucketInfo {
+            resource: crate::buckets::Resources::Channels,
+            route_bucket: String::default(),
+            route_display_bucket: String::default(),
+            require_auth: false,
+        };
+
+        if is_shared_ratelimit {
+            #[cfg(feature = "metrics")]
+            record_ratelimited_request_metrics(
+                crate::metrics::RatelimitType::Shared,
+                id,
+                &method,
+                &route_info,
+            );
+
+            tracing::debug!("Discord returned Shared 429!");
+        } else {
+            let is_global = headers
+                .get("X-RateLimit-Global")
+                .map(|v| v == "true")
+                .unwrap_or(false);
+
+            #[cfg(feature = "metrics")]
+            record_ratelimited_request_metrics(
+                if is_global {
+                    crate::metrics::RatelimitType::GlobalProxy
+                } else {
+                    crate::metrics::RatelimitType::RouteProxy
+                },
+                id,
+                &method,
+                &route_info,
+            );
+
+            // tracing::error!(
+            //     "Discord returned 429! Global: {:?} Scope: {:?} - ABORTING REQUESTS FOR {}ms!",
+            //     is_global,
+            //     headers.get("X-RateLimit-Scope"),
+            //     self.config.ratelimit_timeout.as_millis()
+            // );
+
+            // self.disabled.store(true, Ordering::Release);
+            // tokio::time::sleep(self.config.ratelimit_timeout).await;
+            // self.disabled.store(false, Ordering::Release);
+
+            tracing::error!(
+                "Discord returned 429! Global: {:?} Scope: {:?}",
+                is_global,
+                headers.get("X-RateLimit-Scope"),
+            );
         }
-    };
-
-    let base64_bot_id = match token[4..].split('.').nth(0) {
-        Some(base64_bot_id) => base64_bot_id.as_bytes(),
-        None => return Err("Invalid Authorization header".to_string()),
-    };
-
-    let bot_id = String::from_utf8(
-        forgiving_decode_to_vec(base64_bot_id)
-            .map_err(|_| "Invalid Authorization header".to_string())?,
-    )
-    .map_err(|_| "Invalid Authorization header".to_string())?;
-
-    Ok(Some((bot_id, token)))
-}
-
-fn generate_ratelimit_response(bucket: &str) -> Response<Body> {
-    let mut res = Response::new(Body::from("You are being ratelimited."));
-    *res.status_mut() = hyper::StatusCode::TOO_MANY_REQUESTS;
-
-    res.headers_mut()
-        .insert("x-sent-by-proxy", HeaderValue::from_static("true"));
-    res.headers_mut()
-        .insert("x-ratelimit-bucket", HeaderValue::from_str(bucket).unwrap());
-
-    res
-}
-
-#[derive(Error, Debug)]
-pub enum ProxyError {
-    #[error("FATAL: Redis client could not be initialized. Is Redis running? {0}")]
-    RedisInitFailed(RedisError),
-
-    #[error("Redis Error: {0}")]
-    RedisError(#[from] RedisError),
-
-    #[error("Error Proxying Request: {0}")]
-    RequestError(#[from] hyper::Error),
-
-    #[error("Error fetching Global RL from Discord: {0}")]
-    DiscordError(#[from] DiscordError),
+    }
 }

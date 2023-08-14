@@ -29,10 +29,10 @@ pub enum DiscordError {
     #[error("Non 2xx Status Code fetching Global Ratelimit: {0}")]
     DiscordError(StatusCode),
 
-    #[error("HTTP Error fetching global ratelimit: {0}")]
+    #[error("HTTP Error fetching Global Ratelimit: {0}")]
     RequestError(#[from] hyper::Error),
 
-    #[error("Error proxying request: {0}")]
+    #[error("Global Ratelimit failed to parse: {0}")]
     ParseError(#[from] serde_json::Error),
 }
 
@@ -45,7 +45,7 @@ impl Proxy {
             .uri(GET_GATEWAY_URL)
             .header("Authorization", token)
             .body(Body::empty())
-            .unwrap();
+            .expect("Failed to build global ratelimit request.");
 
         let result = self.http_client.request(req).await?;
 

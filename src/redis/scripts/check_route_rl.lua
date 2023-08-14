@@ -8,27 +8,32 @@
 -- 
 --  Returns the bucket ratelimit status.
 --  - bucket_ratelimit_status
-local bucket_key = KEYS[1]
-local bucket_count_key = bucket_key .. ':count'
 
-local bucket_limit = tonumber(redis.call('GET', bucket_key))
-
-if bucket_limit == nil then
-  return false
+local function check_route_rl (route_key)
+    local route_count_key = route_key .. ':count'
+    
+    local route_limit = tonumber(redis.call('GET', route_key))
+    
+    if route_limit == nil then
+        return false
+    end
+    
+    if route_limit == 0 then
+        return 2
+    end
+    
+    local route_count = tonumber(redis.call('INCR', route_count_key))
+    
+    if route_count == 1 then
+        redis.call('EXPIRE', route_count_key, 60)
+    end
+    
+    if route_count > route_limit then
+        return 0
+    end
+    
+    return route_count
 end
 
-if bucket_limit == 0 then
-  return 2
-end
-
-local bucket_count = tonumber(redis.call('INCR', bucket_count_key))
-
-if bucket_count == 1 then
-  redis.call('EXPIRE', bucket_count_key, 60)
-end
-
-if bucket_count >= bucket_limit then
-  return 0
-end
-
-return bucket_count
+local route_key = KEYS[1]
+return check_route_rl(route_key)

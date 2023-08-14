@@ -1,7 +1,7 @@
 use lazy_static::lazy_static;
 use prometheus::{CounterVec, HistogramOpts, HistogramVec, Opts, Registry};
 
-use crate::buckets::RouteInfo;
+use crate::buckets::BucketInfo;
 
 lazy_static! {
     pub static ref REGISTRY: Registry = Registry::new();
@@ -121,7 +121,7 @@ pub fn register_metrics() {
 pub fn record_successful_request_metrics(
     id: &str,
     method: &http::Method,
-    route_info: RouteInfo,
+    route_info: BucketInfo,
     start: std::time::Instant,
     response: &http::Response<hyper::Body>,
 ) {
@@ -129,7 +129,7 @@ pub fn record_successful_request_metrics(
         .with_label_values(&[
             id,
             &method.to_string(),
-            &route_info.display_route,
+            &route_info.route_display_bucket,
             response.status().as_str(),
         ])
         .observe(start.elapsed().as_secs_f64());
@@ -137,9 +137,9 @@ pub fn record_successful_request_metrics(
     PROXY_REQUESTS.with_label_values(&[id]).inc();
 }
 
-pub fn record_failed_request_metrics(id: &str, method: &http::Method, route_info: RouteInfo) {
+pub fn record_failed_request_metrics(id: &str, method: &http::Method, route_info: BucketInfo) {
     PROXY_ERROR_COLLECTOR
-        .with_label_values(&[id, &method.to_string(), &route_info.display_route])
+        .with_label_values(&[id, &method.to_string(), &route_info.route_display_bucket])
         .inc();
 }
 
@@ -155,12 +155,12 @@ pub fn record_ratelimited_request_metrics(
     ratelimit_type: RatelimitType,
     id: &str,
     method: &http::Method,
-    route_info: &RouteInfo,
+    route_info: &BucketInfo,
 ) {
     match ratelimit_type {
         RatelimitType::RouteProxy => {
             PROXY_ROUTE_429_COLLECTOR
-                .with_label_values(&[id, &method.to_string(), &route_info.display_route])
+                .with_label_values(&[id, &method.to_string(), &route_info.route_display_bucket])
                 .inc();
         }
         RatelimitType::GlobalProxy => {
@@ -168,12 +168,16 @@ pub fn record_ratelimited_request_metrics(
         }
         RatelimitType::Shared => {
             SHARED_429_COLLECTOR
-                .with_label_values(&[id, &method.as_ref().to_string(), &route_info.display_route])
+                .with_label_values(&[
+                    id,
+                    &method.as_ref().to_string(),
+                    &route_info.route_display_bucket,
+                ])
                 .inc();
         }
         RatelimitType::Route => {
             ROUTE_429_COLLECTOR
-                .with_label_values(&[id, &method.to_string(), &route_info.display_route])
+                .with_label_values(&[id, &method.to_string(), &route_info.route_display_bucket])
                 .inc();
         }
         RatelimitType::Global => {
@@ -182,8 +186,8 @@ pub fn record_ratelimited_request_metrics(
     }
 }
 
-pub fn record_overloaded_request_metrics(id: &str, method: &http::Method, route_info: &RouteInfo) {
+pub fn record_overloaded_request_metrics(id: &str, method: &http::Method, route_info: &BucketInfo) {
     PROXY_OVERLOAD_COLLECTOR
-        .with_label_values(&[id, &method.to_string(), &route_info.display_route])
+        .with_label_values(&[id, &method.to_string(), &route_info.route_display_bucket])
         .inc();
 }
