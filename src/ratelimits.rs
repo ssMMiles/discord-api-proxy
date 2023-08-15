@@ -3,18 +3,13 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use axum::response::Response;
 use fred::prelude::RedisError;
-use http::Method;
 use hyper::{Body, HeaderMap};
 use rand::{distributions::Alphanumeric, thread_rng, Rng};
 use tokio::{select, time::Instant, try_join};
 use tracing::{debug, error, trace, warn};
 
 use crate::{
-    buckets::{BucketInfo, Resources},
-    metrics::{
-        record_overloaded_request_metrics, record_ratelimited_request_metrics,
-        record_successful_request_metrics,
-    },
+    buckets::Resources,
     proxy::{Proxy, ProxyError},
     request::DiscordRequestInfo,
     responses,
@@ -206,19 +201,10 @@ impl Proxy {
                 data,
             );
 
-            let id = "temp";
-            let method = Method::GET;
-            let route_info = BucketInfo {
-                resource: crate::buckets::Resources::Channels,
-                route_bucket: String::default(),
-                route_display_bucket: String::default(),
-                require_auth: false,
-            };
-
             let result = match status {
                 RatelimitStatus::ProxyOverloaded => {
                     #[cfg(feature = "metrics")]
-                    record_overloaded_request_metrics(id, &method, &route_info);
+                    metrics::record_overloaded_request_metrics(id, &method, &route_info);
 
                     Ok(Err(responses::overloaded()))
                 }
@@ -253,7 +239,7 @@ impl Proxy {
                     reset_after,
                 } => {
                     #[cfg(feature = "metrics")]
-                    record_ratelimited_request_metrics(
+                    metrics::record_ratelimited_request_metrics(
                         crate::metrics::RatelimitType::Global,
                         id,
                         &method,
@@ -273,7 +259,7 @@ impl Proxy {
                     reset_after,
                 } => {
                     #[cfg(feature = "metrics")]
-                    record_ratelimited_request_metrics(
+                    metrics::record_ratelimited_request_metrics(
                         crate::metrics::RatelimitType::Route,
                         id,
                         &method,

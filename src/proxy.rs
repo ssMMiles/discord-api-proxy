@@ -1,7 +1,7 @@
 use fred::prelude::RedisError;
 use http::{
     header::{CONNECTION, TRANSFER_ENCODING, UPGRADE},
-    HeaderMap, Method,
+    HeaderMap,
 };
 use hyper::{
     client::{connect::dns::GaiResolver, HttpConnector},
@@ -20,16 +20,12 @@ use thiserror::Error;
 use tracing::{trace, trace_span};
 
 use crate::{
-    buckets::BucketInfo,
     config::{ProxyEnvConfig, RedisEnvConfig},
     discord::DiscordError,
     redis::ProxyRedisClient,
     request::DiscordRequestInfo,
     responses,
 };
-
-#[cfg(feature = "trust-dns")]
-use hyper_trust_dns::TrustDnsResolver;
 
 #[cfg(feature = "metrics")]
 use {
@@ -225,15 +221,6 @@ impl Proxy {
             .get("X-RateLimit-Scope")
             .map(|v| v == "shared")
             .unwrap_or(false);
-
-        let id = "temp";
-        let method = Method::GET;
-        let route_info = BucketInfo {
-            resource: crate::buckets::Resources::Channels,
-            route_bucket: String::default(),
-            route_display_bucket: String::default(),
-            require_auth: false,
-        };
 
         if is_shared_ratelimit {
             #[cfg(feature = "metrics")]

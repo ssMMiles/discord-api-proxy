@@ -9,30 +9,38 @@
 -- 
 --  Returns the global ratelimit status.
 --  - global_ratelimit_status
+local function increment_global_count(key)
+    local global_count = redis.call('INCR', key)
 
-local function check_global_rl(global_id, time_slice)
-    local global_time_slice_key = global_id .. time_slice
-    local global_time_slice_count_key = global_time_slice_key .. ':count'
-    
-    local global_limit = tonumber(redis.call('GET', global_id))
-    
-    if global_limit == nil then
-        return false
+    if global_count == 1 then
+        redis.call('EXPIRE', key, 3)
     end
-    
-    local global_time_slice_count = tonumber(redis.call('INCR', global_time_slice_count_key))
-    
-    if global_time_slice_count == 1 then
-        redis.call('EXPIRE', global_time_slice_count_key, 3)
-    end
-    
-    if global_time_slice_count > global_limit then
-        return 0
-    end
-    
-    return global_time_slice_count
+
+    return global_count
 end
 
-local global_id = KEYS[1]
+local global_key = KEYS[1]
 local time_slice = KEYS[2]
-return check_global_rl(global_id, time_slice)
+local global_count_key = global_key .. time_slice
+
+local lock_token = ARGV[1]
+
+local global_limit = tonumber(redis.call('GET', global_key))
+
+local holds_global_lock = false
+if global_limit == nil then
+    holds_global_lock = lock_bucket(global_key, lock_token)
+
+    if holds_global_lock == false then
+        return 1
+    end
+end
+
+local global_count = increment_global_count(global_count_key)
+
+if global_count > global_limit then
+    return {0, global_limit}
+end
+
+local holds_route_lock = false
+return {5, holds_global_lock, holds_route_lock}

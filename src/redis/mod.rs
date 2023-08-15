@@ -39,7 +39,7 @@ struct StaticProxyScripts {
 }
 
 static SCRIPTS: StaticProxyScripts = StaticProxyScripts {
-    check_global_and_route_rl: include_str!("./scripts/check_global_and_route_rl-v3.lua"),
+    check_global_and_route_rl: include_str!("./scripts/check_global_and_route_rl.lua"),
 
     // check_global_rl: include_str!("./scripts/check_global_rl.lua"),
     check_route_rl: include_str!("./scripts/check_route_rl.lua"),
