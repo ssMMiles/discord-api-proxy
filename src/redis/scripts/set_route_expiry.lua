@@ -1,13 +1,3 @@
---  Keys:
---  - Bucket ID
--- 
---  Arguments:
---  - Lock token
---  - Bucket limit
---  - Bucket remaining
---  - Bucket reset timestamp (in ms)
---  - Bucket reset-after TTL (in ms)
---  - Bucket info TTL (in ms)
 local route_key = KEYS[1]
 local route_lock_key = route_key .. ':lock'
 
@@ -47,8 +37,6 @@ else
         redis.call('SET', route_reset_after_key, '1', 'PX', route_reset_after)
 
         return true
-    else 
-        -- redis.log(redis.LOG_NOTICE, 'got old ratelimit update. current: ' .. redis.call('PEXPIRETIME', route_count_key) .. ', new: ' .. route_reset_at)
     end
 end
 

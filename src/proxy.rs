@@ -147,8 +147,6 @@ impl Proxy {
 
         let request_info = DiscordRequestInfo::new(&method, path, headers)?;
 
-        // trace!(?request_info);
-
         drop(_guard);
 
         let lock_token = match self.check_ratelimits(&request_info).await? {
@@ -249,17 +247,6 @@ impl Proxy {
                 &method,
                 &route_info,
             );
-
-            // tracing::error!(
-            //     "Discord returned 429! Global: {:?} Scope: {:?} - ABORTING REQUESTS FOR {}ms!",
-            //     is_global,
-            //     headers.get("X-RateLimit-Scope"),
-            //     self.config.ratelimit_timeout.as_millis()
-            // );
-
-            // self.disabled.store(true, Ordering::Release);
-            // tokio::time::sleep(self.config.ratelimit_timeout).await;
-            // self.disabled.store(false, Ordering::Release);
 
             tracing::error!(
                 "Discord returned 429! Global: {:?} Scope: {:?}",

@@ -26,40 +26,25 @@ use crate::config::RedisEnvConfig;
 
 struct StaticProxyScripts {
     pub check_global_and_route_rl: &'static str,
-
-    // pub check_global_rl: &'static str,
     pub check_route_rl: &'static str,
 
-    pub lock_bucket: &'static str,
-
-    pub unlock_global: &'static str,
-    pub unlock_route: &'static str,
-
+    pub release_global_lock: &'static str,
     pub set_route_expiry: &'static str,
 }
 
 static SCRIPTS: StaticProxyScripts = StaticProxyScripts {
     check_global_and_route_rl: include_str!("./scripts/check_global_and_route_rl.lua"),
-
-    // check_global_rl: include_str!("./scripts/check_global_rl.lua"),
     check_route_rl: include_str!("./scripts/check_route_rl.lua"),
 
-    lock_bucket: include_str!("./scripts/lock_bucket.lua"),
-
-    unlock_global: include_str!("./scripts/unlock_global.lua"),
-    unlock_route: include_str!("./scripts/unlock_route.lua"),
-
+    release_global_lock: include_str!("./scripts/release_global_lock.lua"),
     set_route_expiry: include_str!("./scripts/set_route_expiry.lua"),
 };
 
 struct ProxyScriptHashes {
     pub check_global_and_route_rl: String,
-
-    // pub check_global_rl: String,
     pub check_route_rl: String,
 
-    pub unlock_global: String,
-
+    pub release_global_lock: String,
     pub set_route_expiry: String,
 }
 
@@ -67,12 +52,9 @@ impl ProxyScriptHashes {
     pub fn new() -> Self {
         Self {
             check_global_and_route_rl: sha1_hash(&SCRIPTS.check_global_and_route_rl),
-
-            // check_global_rl: sha1_hash(&SCRIPTS.check_global_rl),
             check_route_rl: sha1_hash(&SCRIPTS.check_route_rl),
 
-            unlock_global: sha1_hash(&SCRIPTS.unlock_global),
-
+            release_global_lock: sha1_hash(&SCRIPTS.release_global_lock),
             set_route_expiry: sha1_hash(&SCRIPTS.set_route_expiry),
         }
     }
@@ -97,9 +79,6 @@ pub enum LockError {
     #[error("Error awaiting lock: {0}")]
     RecvError(#[from] RecvError),
 }
-
-// const PUBSUB_INITIAL_RECONNECT_TIMEOUT: u64 = 5000;
-// const PUBSUB_MAX_RECONNECT_TIMEOUT: u64 = 60000;
 
 impl ProxyRedisClient {
     pub async fn new(env_config: Arc<RedisEnvConfig>) -> Result<Self, RedisError> {
@@ -198,25 +177,13 @@ impl ProxyRedisClient {
         self.pool
             .script_load::<(), &str>(SCRIPTS.check_global_and_route_rl)
             .await?;
-
-        // self.pool
-        //     .script_load::<(), &str>(SCRIPTS.check_global_rl)
-        //     .await?;
         self.pool
             .script_load::<(), &str>(SCRIPTS.check_route_rl)
             .await?;
 
         self.pool
-            .script_load::<(), &str>(SCRIPTS.lock_bucket)
+            .script_load::<(), &str>(SCRIPTS.release_global_lock)
             .await?;
-
-        self.pool
-            .script_load::<(), &str>(SCRIPTS.unlock_global)
-            .await?;
-        self.pool
-            .script_load::<(), &str>(SCRIPTS.unlock_route)
-            .await?;
-
         self.pool
             .script_load::<(), &str>(SCRIPTS.set_route_expiry)
             .await?;
@@ -306,8 +273,6 @@ impl ProxyRedisClient {
                     push_pending_client(channel.clone(), tx).await;
                     drop(pubsub_channels_w);
                 } else {
-                    // self.send_pubsub_command(key.to_string(), true).await?;
-
                     pubsub_channels_w.insert(
                         key.to_string(),
                         Arc::new(PubSubChannel {
@@ -374,13 +339,6 @@ impl ProxyRedisClient {
             None => return,
         };
 
-        // match self.send_pubsub_command(key.to_string(), false).await {
-        //   Ok(_) => (),
-        //   Err(e) => {
-        //     tracing::error!("Error unsubscribing from PubSub channel {} after unlock. This will not resolve itself: {}", key, e);
-        //   }
-        // };
-
         pubsub_channels_w.remove(key);
         drop(pubsub_channels_w);
 
@@ -412,20 +370,6 @@ impl ProxyRedisClient {
             .await
     }
 
-    // pub async fn check_global_rl(
-    //     &self,
-    //     global_id_key: &str,
-    //     time_slice: &str,
-    // ) -> Result<Option<u16>, RedisError> {
-    //     self.pool
-    //         .evalsha::<Option<u16>, &str, Vec<&str>, _>(
-    //             &self.script_hashes.check_global_rl,
-    //             vec![global_id_key, time_slice],
-    //             None,
-    //         )
-    //         .await
-    // }
-
     pub async fn check_route_rl(&self, route_rl_key: &str) -> Result<Vec<String>, RedisError> {
         self.pool
             .evalsha::<Vec<String>, &str, &str, _>(
@@ -436,7 +380,7 @@ impl ProxyRedisClient {
             .await
     }
 
-    pub async fn unlock_global(
+    pub async fn release_global_lock(
         &self,
         global_id_redis_key: &str,
         lock_token: &str,
@@ -445,7 +389,7 @@ impl ProxyRedisClient {
     ) -> Result<bool, RedisError> {
         self.pool
             .evalsha::<Option<bool>, &str, &str, Vec<&str>>(
-                &self.script_hashes.unlock_global,
+                &self.script_hashes.release_global_lock,
                 global_id_redis_key,
                 vec![
                     &lock_token,

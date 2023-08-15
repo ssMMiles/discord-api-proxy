@@ -1,14 +1,3 @@
---  Returned ratelimit status can be:
---  - False/Nil: Ratelimit not found, must be fetched.
---  - 0: Ratelimit exceeded.
---  - 1-Infinity: Ratelimit OK, is number of requests in current bucket.
---  
---  Takes one Key: 
---  - Bucket ID
--- 
---  Returns the bucket ratelimit status.
---  - bucket_ratelimit_status
-
 local function increment_route_count(key)
     local route_count = tonumber(redis.call('INCR', key))
     

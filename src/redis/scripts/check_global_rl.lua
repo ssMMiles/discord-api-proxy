@@ -1,14 +1,5 @@
---  Returned ratelimit status can be:
---  - False/Nil: Ratelimit not found, must be fetched.
---  - 0: Ratelimit exceeded.
---  - 1-Infinity: Ratelimit OK, is number of requests in current bucket.
---  
---  Takes two Keys: 
---  - Global ID
---  - Time Slice
--- 
---  Returns the global ratelimit status.
---  - global_ratelimit_status
+-- I don't think we need this, but its here incase/for reference
+
 local function increment_global_count(key)
     local global_count = redis.call('INCR', key)
 

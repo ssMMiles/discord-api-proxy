@@ -36,9 +36,9 @@ async fn main() -> Result<(), RedisError> {
             )
             .with(
                 tracing_subscriber::fmt::layer()
-                    // .json()
+                    .json()
                     .with_target(false)
-                    // .with_current_span(true)
+                    .with_current_span(true)
                     .with_target(false)
                     .compact(),
             ),

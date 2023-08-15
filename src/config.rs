@@ -61,20 +61,16 @@ pub struct ProxyEnvConfig {
     pub route_rl_strategy: NewBucketStrategy,
 
     pub disable_global_rl: bool,
+    pub lock_timeout: Duration,
 
-    pub global_time_slice_offset_ms: u64,
     pub bucket_ttl_ms: u64,
 
-    pub lock_timeout: Duration,
-    pub ratelimit_timeout: Duration,
-
     pub disable_http2: bool,
-    pub clustered_redis: bool,
+    pub clustered_redis: bool, // TODO: Clustered redis only really needs a small number of changes to the client as all keys are already namespaced, but it's not finished yet
 }
 
 pub enum EnvError {
     NotPresent(String),
-    // InvalidType(String, String),
     InvalidUnicode(String, OsString),
 }
 
@@ -169,7 +165,6 @@ impl AppEnvConfig {
         let redis_pool_size = get_and_parse_envvar::<usize>("REDIS_POOL_SIZE", 128);
 
         let lock_wait_timeout = get_and_parse_envvar::<u64>("LOCK_WAIT_TIMEOUT", 500);
-        let ratelimit_timeout = get_and_parse_envvar::<u64>("RATELIMIT_ABORT_PERIOD", 1000);
 
         let global_ratelimit_strategy = get_and_parse_envvar::<NewBucketStrategy>(
             "GLOBAL_RATELIMIT_STRATEGY",
@@ -181,9 +176,6 @@ impl AppEnvConfig {
         );
 
         let disable_global_rl = get_and_parse_envvar::<bool>("DISABLE_GLOBAL_RATELIMIT", false);
-
-        let global_time_slice_offset_ms =
-            get_and_parse_envvar::<u64>("GLOBAL_TIME_SLICE_OFFSET", 200);
 
         let bucket_ttl_ms = get_and_parse_envvar::<u64>("BUCKET_TTL", 86400000);
 
@@ -212,7 +204,6 @@ impl AppEnvConfig {
             webserver: Arc::new(WebserverEnvConfig { host, port }),
 
             proxy: Arc::new(ProxyEnvConfig {
-                global_time_slice_offset_ms,
                 bucket_ttl_ms,
 
                 global_rl_strategy: global_ratelimit_strategy,
@@ -221,7 +212,6 @@ impl AppEnvConfig {
                 disable_global_rl,
 
                 lock_timeout: Duration::from_millis(lock_wait_timeout),
-                ratelimit_timeout: Duration::from_millis(ratelimit_timeout),
 
                 disable_http2,
 
