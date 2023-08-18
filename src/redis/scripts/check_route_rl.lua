@@ -1,3 +1,8 @@
+local function lock_bucket(key, token)
+    local result = redis.call('SET', key .. ':lock', token, 'NX', 'EX', '5')
+    return result ~= false
+end
+
 local function increment_route_count(key)
     local route_count = tonumber(redis.call('INCR', key))
     

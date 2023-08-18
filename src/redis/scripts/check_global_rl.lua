@@ -1,5 +1,10 @@
 -- I don't think we need this, but its here incase/for reference
 
+local function lock_bucket(key, token)
+    local result = redis.call('SET', key .. ':lock', token, 'NX', 'EX', '5')
+    return result ~= false
+end
+
 local function increment_global_count(key)
     local global_count = redis.call('INCR', key)
 
