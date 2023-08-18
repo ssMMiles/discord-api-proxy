@@ -103,7 +103,7 @@ fn parse_headers(
             token.to_string()
         }
         None => {
-            if require_auth {
+            if !require_auth {
                 return Ok(None);
             }
 
