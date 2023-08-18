@@ -31,7 +31,7 @@ end
 
 local route_count = increment_route_count(route_count_key)
 
-if route_count > route_limit then
+if holds_route_lock == false and route_count > route_limit then
     local reset_after = redis.call('PTTL', route_key .. ':reset_after')
 
     if reset_after ~= -2 then
