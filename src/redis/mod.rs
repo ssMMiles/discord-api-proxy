@@ -370,12 +370,16 @@ impl ProxyRedisClient {
             .await
     }
 
-    pub async fn check_route_rl(&self, route_rl_key: &str) -> Result<Vec<String>, RedisError> {
+    pub async fn check_route_rl(
+        &self,
+        route_rl_key: &str,
+        lock_token: &str,
+    ) -> Result<Vec<String>, RedisError> {
         self.pool
             .evalsha::<Vec<String>, &str, &str, _>(
                 &self.script_hashes.check_route_rl,
                 route_rl_key,
-                None,
+                lock_token,
             )
             .await
     }

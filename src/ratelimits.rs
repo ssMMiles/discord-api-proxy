@@ -196,7 +196,7 @@ impl Proxy {
                     .await?
             } else {
                 self.redis
-                    .check_route_rl(&request_info.route_bucket_redis_key)
+                    .check_route_rl(&request_info.route_bucket_redis_key, &lock_token)
                     .await?
             };
 
