@@ -67,6 +67,9 @@ pub struct ProxyEnvConfig {
 
     pub disable_http2: bool,
     pub clustered_redis: bool, // TODO: Clustered redis only really needs a small number of changes to the client as all keys are already namespaced, but it's not finished yet
+
+    #[cfg(feature = "metrics")]
+    pub metrics_ttl: u64,
 }
 
 pub enum EnvError {
@@ -184,6 +187,9 @@ impl AppEnvConfig {
         let host = get_envvar_with_default("HOST", "127.0.0.1".to_string());
         let port = get_and_parse_envvar::<u16>("PORT", 8080);
 
+        #[cfg(feature = "metrics")]
+        let metrics_ttl = get_and_parse_envvar::<u64>("METRICS_TTL", 86400000);
+
         Self {
             redis: Arc::new(RedisEnvConfig {
                 host: redis_host,
@@ -216,6 +222,9 @@ impl AppEnvConfig {
                 disable_http2,
 
                 clustered_redis,
+
+                #[cfg(feature = "metrics")]
+                metrics_ttl,
             }),
         }
     }

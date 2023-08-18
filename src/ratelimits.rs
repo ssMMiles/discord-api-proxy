@@ -15,6 +15,9 @@ use crate::{
     responses,
 };
 
+#[cfg(feature = "metrics")]
+use crate::metrics;
+
 #[derive(PartialEq, Debug)]
 pub enum RatelimitRetryCause {
     AwaitingGlobalLock,
@@ -167,10 +170,13 @@ impl Proxy {
         &self,
         request_info: &DiscordRequestInfo,
     ) -> Result<Result<RouteLockToken, RatelimitedResponse>, ProxyError> {
+        #[cfg(feature = "metrics")]
+        let ratelimit_checks_started_at = Instant::now();
+
         let use_global_rl = !self.config.disable_global_rl && request_info.uses_global_ratelimit;
 
         let mut overload_count: u8 = 0;
-        loop {
+        let result = loop {
             let check_started_at_timestamp = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .expect("Time went backwards");
@@ -201,10 +207,17 @@ impl Proxy {
                 data,
             );
 
+            trace!(?status);
+
             let result = match status {
                 RatelimitStatus::ProxyOverloaded => {
                     #[cfg(feature = "metrics")]
-                    metrics::record_overloaded_request_metrics(id, &method, &route_info);
+                    metrics::PROXY_REQUEST_OVERLOADED
+                        .with_label_values(&[
+                            request_info.global_id.as_str(),
+                            request_info.route_display_bucket.as_str(),
+                        ])
+                        .inc();
 
                     Ok(Err(responses::overloaded()))
                 }
@@ -239,12 +252,9 @@ impl Proxy {
                     reset_after,
                 } => {
                     #[cfg(feature = "metrics")]
-                    metrics::record_ratelimited_request_metrics(
-                        crate::metrics::RatelimitType::Global,
-                        id,
-                        &method,
-                        &route_info,
-                    );
+                    metrics::PROXY_REQUEST_GLOBAL_429
+                        .with_label_values(&[request_info.global_id.as_str()])
+                        .inc();
 
                     Ok(Err(responses::ratelimited(
                         &request_info.global_id,
@@ -259,12 +269,12 @@ impl Proxy {
                     reset_after,
                 } => {
                     #[cfg(feature = "metrics")]
-                    metrics::record_ratelimited_request_metrics(
-                        crate::metrics::RatelimitType::Route,
-                        id,
-                        &method,
-                        &route_info,
-                    );
+                    metrics::PROXY_REQUEST_ROUTE_429
+                        .with_label_values(&[
+                            request_info.global_id.as_str(),
+                            request_info.route_display_bucket.as_str(),
+                        ])
+                        .inc();
 
                     Ok(Err(responses::ratelimited(
                         &request_info.route_bucket,
@@ -293,7 +303,17 @@ impl Proxy {
             };
 
             break result;
-        }
+        };
+
+        #[cfg(feature = "metrics")]
+        metrics::PROXY_REQUEST_RATELIMIT_CHECK_TIMES
+            .with_label_values(&[
+                request_info.global_id.as_str(),
+                request_info.route_display_bucket.as_str(),
+            ])
+            .observe(ratelimit_checks_started_at.elapsed().as_secs_f64());
+
+        result
     }
 
     async fn fetch_global_ratelimit(

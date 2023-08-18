@@ -1,5 +1,5 @@
 # Discord API Proxy
-A transparent, Redis backed proxy for handling Discord's API ratelimits.
+A transparent, Redis backed proxy for handling Discord's API ratelimits. Designed for use in any distributed environment that needs to interact with the Discord API, this service will centralize and nicely handle all the ratelimiting for your client applications.
 
 ## Usage
 
@@ -15,9 +15,11 @@ docker run -d \
 
 Once up and running, just send your normal requests to `http://YOURPROXY/api/v*` instead of `https://discord.com/api/v*`.
 
-You'll get back all the same responses, except when you would have hit a ratelimit - then you'll get a 429 from the proxy with `x-sent-by-proxy` and `x-ratelimit-bucket` headers.
+You'll get back all the same responses, except when you would have hit a ratelimit - then you'll get a 429 from the proxy with `x-sent-by-proxy` and `x-ratelimit-bucket` headers as well as the usual ratelimiting headers.
 
-If you get a 429 from the proxy, you should just retry until it works. If it's happening a lot, just stop hitting them.
+## Metrics
+
+Metrics are enabled by default and can be accessed at `/metrics` on the proxy. They are exposed in the Prometheus format.
 
 #### Environment Variables
 | Name                       | Description                                                                                                                                                                                                                                                                                                 |
@@ -39,9 +41,6 @@ If you get a 429 from the proxy, you should just retry until it works. If it's h
 | `BUCKET_TTL`               | How long the proxy will cache bucket info for. Set to `0` to store forever, but this isn't recommended. Defaults to `86400000` (24h), except for interaction buckets (Ignores this value, always 15 minutes). If trying to save memory consider using `maxmemory` and `allkeys-lru` on your Redis instance. |
 
 ## Warnings
-
-### Slightly Reduced Throughput
-When sending globally ratelimited requests, the proxy currently starts the 1s bucket time from when the first response is received as Discord never provide the exact time. This can cause the proxy to be slightly over-restrictive depending on your , with a bot where the global ratelimit is 50 only being allowed up to ~47 requests per second.
 
 ### HTTP2 Connection Drops
 These are caused by the underlying HTTP library, see https://github.com/hyperium/hyper/issues/2500. If you're seeing errors, you should use the `DISABLE_HTTP2` environment variable until the linked issue is resolved.

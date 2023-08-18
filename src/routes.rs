@@ -12,6 +12,10 @@ pub async fn proxy(State(proxy): State<Proxy>, req: Request<Body>) -> Response<B
     proxy.handle_request(req).await
 }
 
-pub async fn metrics(State(proxy): State<Proxy>) -> Response<Body> {
-    proxy.get_metrics()
+pub async fn metrics(State(_proxy): State<Proxy>) -> Response<Body> {
+    #[cfg(feature = "metrics")]
+    return _proxy.get_metrics();
+
+    #[cfg(not(feature = "metrics"))]
+    return Response::new(Body::from("Metrics are disabled."));
 }

@@ -11,16 +11,16 @@ const LARGE_SHARDING_INTERNAL_SHARD_RL: u16 = 25;
 
 #[derive(Deserialize)]
 struct GetGatewayBotResponse {
-    _url: String,
-    _shards: u16,
+    // url: String,
+    // shards: u16,
     session_start_limit: SessionStartLimit,
 }
 
 #[derive(Deserialize)]
 struct SessionStartLimit {
-    _total: u16,
-    _remaining: u16,
-    _reset_after: u64,
+    // total: u16,
+    // remaining: u16,
+    // reset_after: u64,
     max_concurrency: u16,
 }
 

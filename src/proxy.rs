@@ -29,12 +29,8 @@ use crate::{
 
 #[cfg(feature = "metrics")]
 use {
-    crate::metrics::{
-        record_failed_request_metrics, record_overloaded_request_metrics,
-        record_ratelimited_request_metrics, record_successful_request_metrics, register_metrics,
-        REGISTRY,
-    },
-    prometheus::{Encoder, TextEncoder},
+    crate::metrics,
+    std::{sync::atomic::AtomicU64, time::Instant},
 };
 
 #[derive(Error, Debug)]
@@ -58,6 +54,9 @@ pub struct Proxy {
 
     pub redis: Arc<ProxyRedisClient>,
     pub http_client: Client<HttpsConnector<HttpConnector<GaiResolver>>, Body>,
+
+    #[cfg(feature = "metrics")]
+    pub metrics_last_reset_at: Arc<AtomicU64>,
 
     pub config: Arc<ProxyEnvConfig>,
 }
@@ -89,49 +88,32 @@ impl Proxy {
             redis: Arc::new(redis_client),
             http_client: Client::builder().build(builder),
 
+            #[cfg(feature = "metrics")]
+            metrics_last_reset_at: Arc::new(AtomicU64::new(0)),
+
             config,
         })
-    }
-
-    pub fn get_metrics(&self) -> Response<Body> {
-        #[cfg(feature = "metrics")]
-        {
-            let mut buffer = Vec::new();
-            if let Err(e) = TextEncoder::new().encode(&REGISTRY.gather(), &mut buffer) {
-                eprintln!("Metrics could not be encoded: {}", e);
-                return Response::new(Body::from("Internal Server Error"));
-            };
-
-            let res = match String::from_utf8(buffer.clone()) {
-                Ok(v) => v,
-                Err(e) => {
-                    eprintln!("Metrics buffer could not be converted to string: {}", e);
-                    return Response::new(Body::from("Internal Server Error"));
-                }
-            };
-            buffer.clear();
-
-            return Response::new(Body::from(res));
-        }
-
-        #[cfg(not(feature = "metrics"))]
-        return Response::new(Body::from("Metrics are disabled."));
     }
 
     pub async fn handle_request(&self, req: http::Request<Body>) -> Response<Body> {
         let res = match self.process(req).await {
             Ok(response) => response,
-            Err(err) => match err {
-                ProxyError::InvalidRequest(message) => responses::invalid_request(message),
-                ProxyError::ProxiedRequestError(err) => {
-                    tracing::error!("Proxied Request Failed: {:?}", err);
-                    responses::internal_error()
+            Err(err) => {
+                #[cfg(feature = "metrics")]
+                metrics::PROXY_REQUEST_ERRORS.inc();
+
+                match err {
+                    ProxyError::InvalidRequest(message) => responses::invalid_request(message),
+                    ProxyError::ProxiedRequestError(err) => {
+                        tracing::error!("Proxied Request Failed: {:?}", err);
+                        responses::internal_error()
+                    }
+                    _ => {
+                        tracing::error!("Proxying Request Failed: {:?}", err);
+                        responses::internal_error()
+                    }
                 }
-                _ => {
-                    tracing::error!("Proxying Request Failed: {:?}", err);
-                    responses::internal_error()
-                }
-            },
+            }
         };
 
         return res;
@@ -146,6 +128,14 @@ impl Proxy {
         let headers = req.headers();
 
         let request_info = DiscordRequestInfo::new(&method, path, headers)?;
+
+        #[cfg(feature = "metrics")]
+        metrics::PROXY_REQUEST_COUNTER
+            .with_label_values(&[
+                request_info.global_id.as_str(),
+                request_info.route_display_bucket.as_str(),
+            ])
+            .inc();
 
         drop(_guard);
 
@@ -183,16 +173,34 @@ impl Proxy {
             return Ok(responses::overloaded());
         }
 
+        #[cfg(feature = "metrics")]
+        metrics::DISCORD_REQUEST_COUNTER
+            .with_label_values(&[
+                request_info.global_id.as_str(),
+                request_info.route_display_bucket.as_str(),
+            ])
+            .inc();
+
         trace!(?lock_token, "Sending request to Discord.");
+
+        #[cfg(feature = "metrics")]
+        let discord_request_sent_at = Instant::now();
+
         let response = self.http_client.request(req).await?;
 
-        self.process_response(
-            response.status(),
-            response.headers(),
-            &request_info,
-            lock_token,
-        )
-        .await?;
+        let status = response.status();
+
+        #[cfg(feature = "metrics")]
+        metrics::DISCORD_REQUEST_RESPONSE_TIMES
+            .with_label_values(&[
+                request_info.global_id.as_str(),
+                request_info.route_display_bucket.as_str(),
+                status.as_str(),
+            ])
+            .observe(discord_request_sent_at.elapsed().as_secs_f64());
+
+        self.process_response(status, response.headers(), &request_info, lock_token)
+            .await?;
 
         Ok(response)
     }
@@ -205,7 +213,7 @@ impl Proxy {
         lock_token: Option<String>,
     ) -> Result<(), ProxyError> {
         if status == StatusCode::TOO_MANY_REQUESTS {
-            self.handle_429(headers).await;
+            self.handle_429(request_info, headers).await;
         }
 
         self.update_ratelimits(headers, &request_info, lock_token)
@@ -214,7 +222,7 @@ impl Proxy {
         Ok(())
     }
 
-    async fn handle_429(&self, headers: &HeaderMap) {
+    async fn handle_429(&self, _request_info: &DiscordRequestInfo, headers: &HeaderMap) {
         let is_shared_ratelimit = headers
             .get("X-RateLimit-Scope")
             .map(|v| v == "shared")
@@ -222,12 +230,12 @@ impl Proxy {
 
         if is_shared_ratelimit {
             #[cfg(feature = "metrics")]
-            record_ratelimited_request_metrics(
-                crate::metrics::RatelimitType::Shared,
-                id,
-                &method,
-                &route_info,
-            );
+            metrics::DISCORD_REQUEST_SHARED_429
+                .with_label_values(&[
+                    _request_info.global_id.as_str(),
+                    _request_info.route_display_bucket.as_str(),
+                ])
+                .inc();
 
             tracing::debug!("Discord returned Shared 429!");
         } else {
@@ -237,18 +245,20 @@ impl Proxy {
                 .unwrap_or(false);
 
             #[cfg(feature = "metrics")]
-            record_ratelimited_request_metrics(
-                if is_global {
-                    crate::metrics::RatelimitType::GlobalProxy
-                } else {
-                    crate::metrics::RatelimitType::RouteProxy
-                },
-                id,
-                &method,
-                &route_info,
-            );
+            if is_global {
+                metrics::DISCORD_REQUEST_GLOBAL_429
+                    .with_label_values(&[_request_info.global_id.as_str()])
+                    .inc();
+            } else {
+                metrics::DISCORD_REQUEST_ROUTE_429
+                    .with_label_values(&[
+                        _request_info.global_id.as_str(),
+                        _request_info.route_display_bucket.as_str(),
+                    ])
+                    .inc();
+            }
 
-            tracing::error!(
+            tracing::warn!(
                 "Discord returned 429! Global: {:?} Scope: {:?}",
                 is_global,
                 headers.get("X-RateLimit-Scope"),

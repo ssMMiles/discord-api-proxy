@@ -1,193 +1,200 @@
-use lazy_static::lazy_static;
-use prometheus::{CounterVec, HistogramOpts, HistogramVec, Opts, Registry};
+use std::sync::atomic::Ordering;
 
-use crate::buckets::BucketInfo;
+use axum::response::Response;
+use hyper::Body;
+use lazy_static::lazy_static;
+use prometheus::{
+    Counter, CounterVec, Encoder, HistogramOpts, HistogramVec, Opts, Registry, TextEncoder,
+};
+
+use crate::proxy::Proxy;
 
 lazy_static! {
     pub static ref REGISTRY: Registry = Registry::new();
-    pub static ref RESPONSE_TIME_COLLECTOR: HistogramVec = HistogramVec::new(
+    pub static ref DISCORD_REQUEST_RESPONSE_TIMES: HistogramVec = HistogramVec::new(
         HistogramOpts::new(
-            "request_response_times",
+            "discord_request_response_times",
             "Results of attempted Discord API requests."
         )
-        .buckets(vec![0.1, 0.25, 0.5, 1.0, 2.5]),
-        &["id", "method", "route", "status"]
+        .buckets(vec![0.1, 0.2, 0.3, 0.4, 0.6, 1.0, 2.5, 5.0]),
+        &["global_id", "route", "status"]
     )
     .expect("Failed to create metrics collector.");
-    pub static ref SHARED_429_COLLECTOR: CounterVec = CounterVec::new(
+    pub static ref DISCORD_REQUEST_COUNTER: CounterVec = CounterVec::new(
         Opts::new(
-            "requests_shared_429s",
+            "discord_request_counter",
+            "Number of requests for which the proxy encountered an unexpected error."
+        ),
+        &["global_id", "route"]
+    )
+    .expect("Failed to create metrics collector.");
+    pub static ref DISCORD_REQUEST_SHARED_429: CounterVec = CounterVec::new(
+        Opts::new(
+            "discord_request_shared_429",
             "Number of requests for which a shared 429 was encountered."
         ),
-        &["id", "method", "route"]
+        &["global_id", "route"]
     )
     .expect("Failed to create metrics collector.");
-    pub static ref ROUTE_429_COLLECTOR: CounterVec = CounterVec::new(
+    pub static ref DISCORD_REQUEST_ROUTE_429: CounterVec = CounterVec::new(
         Opts::new(
-            "requests_route_429s",
+            "discord_request_route_429",
             "Number of requests for which a unique 429 was encountered."
         ),
-        &["id", "method", "route"]
+        &["global_id", "route"]
     )
     .expect("Failed to create metrics collector.");
-    pub static ref GLOBAL_429_COLLECTOR: CounterVec = CounterVec::new(
+    pub static ref DISCORD_REQUEST_GLOBAL_429: CounterVec = CounterVec::new(
         Opts::new(
-            "requests_global_429s",
+            "discord_request_global_429",
             "Number of requests for which a global 429 was encountered."
         ),
-        &["id"]
+        &["global_id"]
     )
     .expect("Failed to create metrics collector.");
-    pub static ref PROXY_ROUTE_429_COLLECTOR: CounterVec = CounterVec::new(
+    pub static ref PROXY_REQUEST_RATELIMIT_CHECK_TIMES: HistogramVec = HistogramVec::new(
+        HistogramOpts::new(
+            "proxy_request_ratelimit_check_times",
+            "Time taken to check ratelimits for a request."
+        )
+        .buckets(vec![0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25]),
+        &["global_id", "route",]
+    )
+    .expect("Failed to create metrics collector.");
+    pub static ref PROXY_REQUEST_COUNTER: CounterVec = CounterVec::new(
         Opts::new(
-            "requests_proxy_route_429s",
+            "proxy_request_counter",
+            "Number of requests for which the proxy encountered an unexpected error."
+        ),
+        &["global_id", "route"]
+    )
+    .expect("Failed to create metrics collector.");
+    pub static ref PROXY_REQUEST_ROUTE_429: CounterVec = CounterVec::new(
+        Opts::new(
+            "proxy_request_route_429",
             "Number of requests ratelimited by the proxy."
         ),
-        &["id", "method", "route"]
+        &["global_id", "route"]
     )
     .expect("Failed to create metrics collector.");
-    pub static ref PROXY_GLOBAL_429_COLLECTOR: CounterVec = CounterVec::new(
+    pub static ref PROXY_REQUEST_GLOBAL_429: CounterVec = CounterVec::new(
         Opts::new(
-            "requests_proxy_global_429s",
+            "proxy_request_global_429",
             "Number of requests ratelimited by the proxy."
         ),
-        &["id"]
+        &["global_id"]
     )
     .expect("Failed to create metrics collector.");
-    pub static ref PROXY_OVERLOAD_COLLECTOR: CounterVec = CounterVec::new(
+    pub static ref PROXY_REQUEST_OVERLOADED: CounterVec = CounterVec::new(
         Opts::new(
-            "requests_overloaded",
+            "proxy_request_overloaded",
             "Number of requests for which the proxy was overloaded."
         ),
-        &["id", "method", "route"]
+        &["global_id", "route"]
     )
     .expect("Failed to create metrics collector.");
-    pub static ref PROXY_ERROR_COLLECTOR: CounterVec = CounterVec::new(
-        Opts::new(
-            "requests_proxy_error",
-            "Number of requests for which the proxy encountered an unexpected error."
-        ),
-        &["id", "method", "route"]
-    )
-    .expect("Failed to create metrics collector.");
-    pub static ref PROXY_REQUESTS: CounterVec = CounterVec::new(
-        Opts::new(
-            "requests_proxy",
-            "Number of requests for which the proxy encountered an unexpected error."
-        ),
-        &["id"]
+    pub static ref PROXY_REQUEST_ERRORS: Counter = Counter::new(
+        "proxy_request_error",
+        "Number of requests for which the proxy encountered an unexpected error."
     )
     .expect("Failed to create metrics collector.");
 }
 
 pub fn register_metrics() {
     REGISTRY
-        .register(Box::new(RESPONSE_TIME_COLLECTOR.clone()))
+        .register(Box::new(DISCORD_REQUEST_RESPONSE_TIMES.clone()))
         .expect("Failed to register metrics collector.");
 
     REGISTRY
-        .register(Box::new(SHARED_429_COLLECTOR.clone()))
+        .register(Box::new(DISCORD_REQUEST_COUNTER.clone()))
         .expect("Failed to register metrics collector.");
 
     REGISTRY
-        .register(Box::new(ROUTE_429_COLLECTOR.clone()))
+        .register(Box::new(DISCORD_REQUEST_SHARED_429.clone()))
         .expect("Failed to register metrics collector.");
 
     REGISTRY
-        .register(Box::new(GLOBAL_429_COLLECTOR.clone()))
+        .register(Box::new(DISCORD_REQUEST_ROUTE_429.clone()))
         .expect("Failed to register metrics collector.");
 
     REGISTRY
-        .register(Box::new(PROXY_ROUTE_429_COLLECTOR.clone()))
+        .register(Box::new(DISCORD_REQUEST_GLOBAL_429.clone()))
         .expect("Failed to register metrics collector.");
 
     REGISTRY
-        .register(Box::new(PROXY_GLOBAL_429_COLLECTOR.clone()))
+        .register(Box::new(PROXY_REQUEST_RATELIMIT_CHECK_TIMES.clone()))
         .expect("Failed to register metrics collector.");
 
     REGISTRY
-        .register(Box::new(PROXY_OVERLOAD_COLLECTOR.clone()))
+        .register(Box::new(PROXY_REQUEST_COUNTER.clone()))
         .expect("Failed to register metrics collector.");
 
     REGISTRY
-        .register(Box::new(PROXY_ERROR_COLLECTOR.clone()))
+        .register(Box::new(PROXY_REQUEST_ROUTE_429.clone()))
         .expect("Failed to register metrics collector.");
 
     REGISTRY
-        .register(Box::new(PROXY_REQUESTS.clone()))
+        .register(Box::new(PROXY_REQUEST_GLOBAL_429.clone()))
         .expect("Failed to register metrics collector.");
+
+    REGISTRY
+        .register(Box::new(PROXY_REQUEST_OVERLOADED.clone()))
+        .expect("Failed to register metrics collector.");
+
+    REGISTRY
+        .register(Box::new(PROXY_REQUEST_ERRORS.clone()))
+        .expect("Failed to register metrics collector.");
+
+    reset_metrics();
 }
 
-pub fn record_successful_request_metrics(
-    id: &str,
-    method: &http::Method,
-    route_info: BucketInfo,
-    start: std::time::Instant,
-    response: &http::Response<hyper::Body>,
-) {
-    RESPONSE_TIME_COLLECTOR
-        .with_label_values(&[
-            id,
-            &method.to_string(),
-            &route_info.route_display_bucket,
-            response.status().as_str(),
-        ])
-        .observe(start.elapsed().as_secs_f64());
-
-    PROXY_REQUESTS.with_label_values(&[id]).inc();
+pub fn reset_metrics() {
+    DISCORD_REQUEST_RESPONSE_TIMES.reset();
+    DISCORD_REQUEST_COUNTER.reset();
+    DISCORD_REQUEST_SHARED_429.reset();
+    DISCORD_REQUEST_ROUTE_429.reset();
+    DISCORD_REQUEST_GLOBAL_429.reset();
+    PROXY_REQUEST_RATELIMIT_CHECK_TIMES.reset();
+    PROXY_REQUEST_COUNTER.reset();
+    PROXY_REQUEST_ROUTE_429.reset();
+    PROXY_REQUEST_GLOBAL_429.reset();
+    PROXY_REQUEST_OVERLOADED.reset();
+    PROXY_REQUEST_ERRORS.reset();
 }
 
-pub fn record_failed_request_metrics(id: &str, method: &http::Method, route_info: BucketInfo) {
-    PROXY_ERROR_COLLECTOR
-        .with_label_values(&[id, &method.to_string(), &route_info.route_display_bucket])
-        .inc();
-}
+impl Proxy {
+    pub fn get_metrics(&self) -> Response<Body> {
+        let mut buffer = Vec::new();
+        if let Err(e) = TextEncoder::new().encode(&REGISTRY.gather(), &mut buffer) {
+            eprintln!("Metrics could not be encoded: {}", e);
+            return Response::new(Body::from("Internal Server Error"));
+        };
 
-pub enum RatelimitType {
-    RouteProxy,
-    GlobalProxy,
-    Shared,
-    Route,
-    Global,
-}
+        let res = match String::from_utf8(buffer.clone()) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("Metrics buffer could not be converted to string: {}", e);
+                return Response::new(Body::from("Internal Server Error"));
+            }
+        };
+        buffer.clear();
 
-pub fn record_ratelimited_request_metrics(
-    ratelimit_type: RatelimitType,
-    id: &str,
-    method: &http::Method,
-    route_info: &BucketInfo,
-) {
-    match ratelimit_type {
-        RatelimitType::RouteProxy => {
-            PROXY_ROUTE_429_COLLECTOR
-                .with_label_values(&[id, &method.to_string(), &route_info.route_display_bucket])
-                .inc();
+        let last_reset_at = self.metrics_last_reset_at.load(Ordering::Acquire);
+        let current_timestamp = get_current_timestamp();
+
+        if last_reset_at + self.config.metrics_ttl < current_timestamp {
+            self.metrics_last_reset_at
+                .store(current_timestamp, Ordering::Release);
+            reset_metrics();
         }
-        RatelimitType::GlobalProxy => {
-            PROXY_GLOBAL_429_COLLECTOR.with_label_values(&[id]).inc();
-        }
-        RatelimitType::Shared => {
-            SHARED_429_COLLECTOR
-                .with_label_values(&[
-                    id,
-                    &method.as_ref().to_string(),
-                    &route_info.route_display_bucket,
-                ])
-                .inc();
-        }
-        RatelimitType::Route => {
-            ROUTE_429_COLLECTOR
-                .with_label_values(&[id, &method.to_string(), &route_info.route_display_bucket])
-                .inc();
-        }
-        RatelimitType::Global => {
-            GLOBAL_429_COLLECTOR.with_label_values(&[id]).inc();
-        }
+
+        return Response::new(Body::from(res));
     }
 }
 
-pub fn record_overloaded_request_metrics(id: &str, method: &http::Method, route_info: &BucketInfo) {
-    PROXY_OVERLOAD_COLLECTOR
-        .with_label_values(&[id, &method.to_string(), &route_info.route_display_bucket])
-        .inc();
+fn get_current_timestamp() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
 }
