@@ -39,6 +39,7 @@ Metrics are enabled by default and can be accessed at `/metrics` on the proxy. T
 | `GLOBAL_TIME_SLICE_OFFSET` | The offset (in ms) to add to the global ratelimit's 1s fixed window to make up for the round trip to Discord. You probably don't want to mess with this unless you have a very high ping to the API. Defaults to `200`.                                                                                     |
 | `DISABLE_GLOBAL_RATELIMIT` | Whether to disable the global ratelimit checks, only use this if you're sure you won't hit it. Defaults to `false`.                                                                                                                                                                                         |
 | `BUCKET_TTL`               | How long the proxy will cache bucket info for. Set to `0` to store forever, but this isn't recommended. Defaults to `86400000` (24h), except for interaction buckets (Ignores this value, always 15 minutes). If trying to save memory consider using `maxmemory` and `allkeys-lru` on your Redis instance. |
+| `METRICS_TTL`              | Duration (in ms) after which to reset the metric counters. Defaults to 86400000 (24 hours).                                                                                                                                                                                                                 |
 
 ## Warnings
 
