@@ -59,10 +59,6 @@ impl RatelimitStatus {
         let global_slice_reset_at = (check_started_at_timestamp.as_secs() + 1) as u128 * 1000;
         let curr_time = check_started_at_timestamp.as_millis() + check_time;
 
-        if curr_time >= global_slice_reset_at {
-            return RatelimitStatus::RequiresRetry(RatelimitRetryCause::GlobalRatelimitDrifted);
-        }
-
         if ratelimit_check_is_overloaded(check_time) {
             if overload_count == 3 {
                 return RatelimitStatus::ProxyOverloaded;
@@ -71,6 +67,10 @@ impl RatelimitStatus {
             return RatelimitStatus::RequiresRetry(RatelimitRetryCause::ProxyOverloaded {
                 retry_count: overload_count + 1,
             });
+        }
+
+        if curr_time >= global_slice_reset_at {
+            return RatelimitStatus::RequiresRetry(RatelimitRetryCause::GlobalRatelimitDrifted);
         }
 
         debug!(?data, "Ratelimit check response: {:#?}", data);
@@ -240,7 +240,7 @@ impl Proxy {
                             overload_count += 1;
                         }
                         RatelimitRetryCause::GlobalRatelimitDrifted => {
-                            warn!("Global ratelimit drifted, retrying.");
+                            debug!("Global ratelimit drifted, retrying.");
                         }
                     }
 
@@ -379,37 +379,59 @@ impl Proxy {
         request_info: &DiscordRequestInfo,
         lock_token: Option<String>,
     ) -> Result<(), RedisError> {
-        let limit = match headers.get("X-RateLimit-Limit") {
-            Some(limit) => limit.clone().to_str().unwrap().parse::<u16>().unwrap(),
-            None => 0,
-        };
+        let headers: Option<(u16, u16, u64, u64)> = || -> Option<(u16, u16, u64, u64)> {
+            let limit = match headers.get("X-RateLimit-Limit") {
+                Some(limit) => limit.clone().to_str().unwrap().parse::<u16>().unwrap(),
+                None => {
+                    warn!("X-RateLimit-Limit header missing");
+                    return None;
+                }
+            };
 
-        let remaining = match headers.get("X-RateLimit-Remaining") {
-            Some(remaining) => remaining.clone().to_str().unwrap().parse::<u16>().unwrap(),
-            None => 0,
-        };
+            let remaining = match headers.get("X-RateLimit-Remaining") {
+                Some(remaining) => remaining.clone().to_str().unwrap().parse::<u16>().unwrap(),
+                None => {
+                    warn!("X-RateLimit-Remaining header missing");
+                    return None;
+                }
+            };
 
-        let reset_at = match headers.get("X-RateLimit-Reset") {
-            Some(timestamp) => timestamp
-                .clone()
-                .to_str()
-                .unwrap()
-                .replace(".", "")
-                .parse::<u64>()
-                .unwrap(),
-            None => 0,
-        };
+            let reset_at = match headers.get("X-RateLimit-Reset") {
+                Some(timestamp) => timestamp
+                    .clone()
+                    .to_str()
+                    .unwrap()
+                    .replace(".", "")
+                    .parse::<u64>()
+                    .unwrap(),
+                None => {
+                    warn!("X-RateLimit-Reset header missing");
+                    return None;
+                }
+            };
 
-        let reset_after = match headers.get("X-RateLimit-Reset-After") {
-            Some(after) => after
-                .clone()
-                .to_str()
-                .unwrap()
-                .replace(".", "")
-                .parse::<u64>()
-                .unwrap(),
-            None => 0,
-        };
+            let reset_after = match headers.get("X-RateLimit-Reset-After") {
+                Some(after) => after
+                    .clone()
+                    .to_str()
+                    .unwrap()
+                    .replace(".", "")
+                    .parse::<u64>()
+                    .unwrap(),
+                None => {
+                    warn!("X-RateLimit-Reset-After header missing");
+                    return None;
+                }
+            };
+
+            Some((limit, remaining, reset_at, reset_after))
+        }();
+
+        if headers.is_none() {
+            return Ok(());
+        }
+
+        let (limit, remaining, reset_at, reset_after) = headers.unwrap();
 
         // Force 15 minute TTL for interaction routes
         let bucket_ttl = if request_info.resource == Resources::Interactions {
