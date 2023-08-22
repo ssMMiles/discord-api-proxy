@@ -1,17 +1,18 @@
-FROM debian:bullseye-slim AS builder
-
-RUN apt-get update && apt-get upgrade -y && \
-    apt-get install gcc libssl-dev pkg-config protobuf-compiler git libssl-dev ca-certificates curl -y
-
-RUN curl https://sh.rustup.rs -sSf | sh -s -- -y
+FROM rust:slim-buster AS builder
 
 WORKDIR /app
 
 COPY Cargo.toml .
 COPY src/ src/
 
-RUN ~/.cargo/bin/cargo build --release && \
-    cp target/release/discord-api-proxy /usr/bin/discord-api-proxy && \
-    ~/.cargo/bin/cargo clean
+RUN apt-get update && \
+    apt-get install gcc libssl-dev pkg-config protobuf-compiler -y && \
+    cargo build --release
+
+FROM debian:buster-slim
+
+RUN apt-get update && apt-get install libssl-dev ca-certificates -y
+
+COPY --from=builder /app/target/release/discord-api-proxy /usr/bin/discord-api-proxy
 
 ENTRYPOINT ["/usr/bin/discord-api-proxy"]
