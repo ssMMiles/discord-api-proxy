@@ -241,7 +241,7 @@ impl Proxy {
             tracing::debug!("Discord returned Shared 429!");
 
             tracing::warn!("Hit shared RL, waiting an extra second before returning.");
-            sleep(Duration::from_secs(1)).await;
+            sleep(Duration::from_secs(3)).await;
         } else {
             let is_global = headers
                 .get("X-RateLimit-Global")
