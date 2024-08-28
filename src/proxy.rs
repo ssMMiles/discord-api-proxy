@@ -1,7 +1,7 @@
 use fred::prelude::RedisError;
 use http::{
     header::{CONNECTION, TRANSFER_ENCODING, UPGRADE},
-    HeaderMap,
+    HeaderMap, Method,
 };
 use hyper::{
     client::{connect::dns::GaiResolver, HttpConnector},
@@ -200,7 +200,7 @@ impl Proxy {
             ])
             .observe(discord_request_sent_at.elapsed().as_secs_f64());
 
-        self.process_response(status, response.headers(), &request_info, lock_token)
+        self.process_response(status, response.headers(), &request_info, method, lock_token)
             .await?;
 
         Ok(response)
@@ -211,10 +211,11 @@ impl Proxy {
         status: StatusCode,
         headers: &HeaderMap,
         request_info: &DiscordRequestInfo,
+        method: &Method,
         lock_token: Option<String>,
     ) -> Result<(), ProxyError> {
         if status == StatusCode::TOO_MANY_REQUESTS {
-            self.handle_429(request_info, headers).await;
+            self.handle_429(request_info, method, headers).await;
         }
 
         self.update_ratelimits(headers, &request_info, lock_token)
@@ -223,7 +224,7 @@ impl Proxy {
         Ok(())
     }
 
-    async fn handle_429(&self, _request_info: &DiscordRequestInfo, headers: &HeaderMap) {
+    async fn handle_429(&self, _request_info: &DiscordRequestInfo, method: &Method, headers: &HeaderMap) {
         let is_shared_ratelimit = headers
             .get("X-RateLimit-Scope")
             .map(|v| v == "shared")
@@ -240,7 +241,7 @@ impl Proxy {
 
             tracing::debug!("Discord returned Shared 429!");
 
-            tracing::warn!("Hit shared RL on Bucket: {:?} {:?} {:?} {:?} {:?}", headers.get("X-RateLimit-Bucket"), headers.get("X-RateLimit-Reset"), headers.get("X-RateLimit-Reset-After"), headers.get("X-RateLimit-Remaining"), headers.get("X-RateLimit-Limit"));
+            tracing::warn!("Hit shared RL on {} {} -\nBucket: {:?} {:?} {:?} {:?} {:?}", method, _request_info.route_bucket, headers.get("X-RateLimit-Bucket"), headers.get("X-RateLimit-Reset"), headers.get("X-RateLimit-Reset-After"), headers.get("X-RateLimit-Remaining"), headers.get("X-RateLimit-Limit"));
             sleep(Duration::from_secs(3)).await;
         } else {
             let is_global = headers
