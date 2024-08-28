@@ -200,7 +200,7 @@ impl Proxy {
             ])
             .observe(discord_request_sent_at.elapsed().as_secs_f64());
 
-        self.process_response(status, response.headers(), &request_info, method, lock_token)
+        self.process_response(status, response.headers(), &request_info, &method, lock_token)
             .await?;
 
         Ok(response)
