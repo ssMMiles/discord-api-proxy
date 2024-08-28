@@ -9,12 +9,13 @@ use hyper::{
     Body, Client, Response, StatusCode, Uri,
 };
 use hyper_rustls::{HttpsConnector, HttpsConnectorBuilder};
+use tokio::time::sleep;
 use std::{
     str::FromStr,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
-    },
+    }, time::Duration,
 };
 use thiserror::Error;
 use tracing::{trace, trace_span};
@@ -238,6 +239,9 @@ impl Proxy {
                 .inc();
 
             tracing::debug!("Discord returned Shared 429!");
+
+            tracing::warn!("Hit shared RL, waiting an extra second before returning.");
+            sleep(Duration::from_secs(1)).await;
         } else {
             let is_global = headers
                 .get("X-RateLimit-Global")
