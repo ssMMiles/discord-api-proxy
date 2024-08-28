@@ -262,11 +262,11 @@ impl Proxy {
                     .inc();
             }
 
-            tracing::warn!(
-                "Discord returned 429! Global: {:?} Scope: {:?}",
-                is_global,
-                headers.get("X-RateLimit-Scope"),
-            );
+            // tracing::warn!(
+            //     "Discord returned 429! Global: {:?} Scope: {:?}",
+            //     is_global,
+            //     headers.get("X-RateLimit-Scope"),
+            // );
         }
     }
 }
