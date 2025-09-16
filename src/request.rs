@@ -109,8 +109,12 @@ fn parse_headers(
 
     let jwt = if token.starts_with("Bot ") {
         &token[4..]
+    } else if token.starts_with("Bearer ") {
+        &token[7..]
     } else {
-        &token
+        return Err(ProxyError::InvalidRequest(
+            "Invalid Authorization header".into(),
+        ))
     };
 
     let base64_bot_id = match jwt.split('.').nth(0) {
