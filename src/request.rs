@@ -94,12 +94,6 @@ fn parse_headers(
                 }
             };
 
-            if !token.starts_with("Bot ") {
-                return Err(ProxyError::InvalidRequest(
-                    "Invalid Authorization header".into(),
-                ));
-            }
-
             token.to_string()
         }
         None => {
@@ -113,7 +107,17 @@ fn parse_headers(
         }
     };
 
-    let base64_bot_id = match token[4..].split('.').nth(0) {
+    let jwt = if token.starts_with("Bot ") {
+        &token[4..]
+    } else if token.starts_with("Bearer ") {
+        &token[7..]
+    } else {
+        return Err(ProxyError::InvalidRequest(
+            "Invalid Authorization header".into(),
+        ))
+    };
+
+    let base64_bot_id = match jwt.split('.').nth(0) {
         Some(base64_bot_id) => base64_bot_id.as_bytes(),
         None => {
             return Err(ProxyError::InvalidRequest(
