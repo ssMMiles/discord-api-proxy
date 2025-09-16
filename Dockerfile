@@ -1,4 +1,4 @@
-FROM rust:slim-buster AS builder
+FROM rust:slim-trixie AS builder
 
 WORKDIR /app
 
@@ -9,7 +9,7 @@ RUN apt-get update && \
     apt-get install gcc libssl-dev pkg-config protobuf-compiler -y && \
     cargo build --release
 
-FROM debian:buster-slim
+FROM debian:trixie-slim
 
 RUN apt-get update && apt-get install libssl-dev ca-certificates -y
 
